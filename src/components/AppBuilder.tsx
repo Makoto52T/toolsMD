@@ -467,12 +467,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               {!projects.length && (
                 <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No projects yet</div>
               )}
-              <button
-                className="project-switcher-item project-switcher-new"
-                onClick={createProject}
-              >
-                <span>➕</span> New Project
-              </button>
             </div>
           )}
         </div>
@@ -539,7 +533,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               {p.id === projectId ? '✓' : '📁'} {p.name}
             </button>
           ))}
-          <button onClick={() => { createProject(); setMenuOpen(false); }} className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }}>➕ New Project</button>
           <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
           <button onClick={() => signOut()} className="btn btn-ghost btn-sm" style={{ color: '#f87171' }}>🚪 Logout</button>
         </div>
