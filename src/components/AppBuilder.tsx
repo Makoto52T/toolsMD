@@ -1,6 +1,7 @@
 'use client';
 
 import { Session } from 'next-auth';
+import { signOut } from 'next-auth/react';
 import { useState, useCallback, useEffect, useRef } from 'react';
 
 interface Project { id: string; name: string; }
@@ -27,6 +28,9 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
 
   // ─── Create Node Modal state ───
   const [createModal, setCreateModal] = useState(false);
@@ -65,6 +69,25 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
 
   useEffect(() => { if (projectId) loadData(); }, [projectId, loadData]);
 
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.project-switcher')) setProjectSwitcherOpen(false);
+      if (!target.closest('.user-menu')) setUserMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const data = await api('GET', '/projects');
+      setProjects(Array.isArray(data) ? data : []);
+    } catch { /* silently ignore */ }
+  }, []);
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+
   // Populate node name in edit modal
   useEffect(() => {
     if (editingNode) {
@@ -81,6 +104,18 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
     const name = prompt('Project name:') || 'Untitled';
     const p = await api('POST', '/projects', { name });
     setProjectId(p.id); setProjectName(p.name);
+    setProjectSwitcherOpen(false);
+    loadProjects();
+  };
+
+  const switchProject = async (id: string, name: string) => {
+    setProjectId(id);
+    setProjectName(name);
+    setProjectSwitcherOpen(false);
+    setSelectedNode(null);
+    setNodes([]);
+    setFunctions([]);
+    setEdges([]);
   };
 
   const openCreateModal = () => {
@@ -296,6 +331,32 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
         .topbar-actions.mobile { display: none; }
         .hamburger { display: none; background: none; border: none; color: var(--text-secondary); font-size: 20px; cursor: pointer; padding: 4px 8px; }
 
+        /* Project Switcher */
+        .project-switcher { position: relative; margin-right: 8px; flex-shrink: 0; }
+        .project-switcher-trigger { display: flex; align-items: center; gap: 4px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); font-size: 14px; color: var(--text-primary); font-weight: 600; background: none; border: 1px solid transparent; white-space: nowrap; }
+        .project-switcher-trigger:hover { background: var(--surface-hover); border-color: var(--border); }
+        .project-switcher-trigger svg { width: 14px; height: 14px; color: var(--text-muted); }
+        .project-switcher-dropdown { position: absolute; top: 42px; left: 0; background: var(--surface-elevated); border: 1px solid var(--border-hover); border-radius: var(--radius-md); padding: 4px; z-index: 200; box-shadow: 0 8px 32px rgba(0,0,0,0.4); min-width: 220px; max-height: 320px; overflow-y: auto; }
+        .project-switcher-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: var(--text-secondary); border: none; background: none; width: 100%; text-align: left; }
+        .project-switcher-item:hover { background: var(--surface-hover); }
+        .project-switcher-item.active { background: var(--accent-bg); color: var(--text-primary); }
+        .project-switcher-item .check { color: var(--accent); font-size: 11px; margin-left: auto; }
+        .project-switcher-new { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; color: var(--accent); font-weight: 500; }
+
+        /* User Menu */
+        .user-menu { position: relative; margin-left: 8px; flex-shrink: 0; }
+        .user-menu-trigger { display: flex; align-items: center; cursor: pointer; padding: 0; background: none; border: none; }
+        .user-avatar { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; border: 2px solid transparent; }
+        .user-avatar:hover { border-color: var(--accent); }
+        .user-avatar-placeholder { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-bg); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; border: 2px solid transparent; }
+        .user-avatar-placeholder:hover { border-color: var(--accent); }
+        .user-menu-dropdown { position: absolute; top: 44px; right: 0; background: var(--surface-elevated); border: 1px solid var(--border-hover); border-radius: var(--radius-md); padding: 8px; z-index: 200; box-shadow: 0 8px 32px rgba(0,0,0,0.4); min-width: 220px; }
+        .user-menu-email { padding: 8px 12px; font-size: 12px; color: var(--text-muted); border-bottom: 1px solid var(--border); margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .user-menu-logout { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: #f87171; border: none; background: none; width: 100%; text-align: left; }
+        .user-menu-logout:hover { background: rgba(248,113,113,0.1); }
+
+        /* Close dropdowns on outside click */
+
         /* Sidebar */
         .sidebar { width: 200px; border-right: 1px solid var(--border); overflow-y: auto; padding: 8px; background: var(--bg-raised); flex-shrink: 0; }
         .sidebar-header { padding: 4px 8px 8px; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; display: flex; justify-content: space-between; align-items: center; }
@@ -371,13 +432,54 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
           .modal-overlay { align-items: flex-end; }
           .topbar { padding: 8px 10px; }
           .topbar-name { max-width: 80px; }
+          .project-switcher-trigger { font-size: 13px; padding: 4px 6px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .project-switcher-dropdown { left: -40px; min-width: 200px; }
+          .user-menu-dropdown { right: -60px; min-width: 200px; }
           .fn-desc { max-width: 200px; }
         }
       `}</style>
 
       {/* Topbar */}
       <div className="topbar">
-        <span className="topbar-logo">🧩<span className="topbar-name">{projectName}</span></span>
+        <span className="topbar-logo">🧩</span>
+
+        {/* Project Switcher */}
+        <div className="project-switcher">
+          <button
+            className="project-switcher-trigger"
+            onClick={(e) => { e.stopPropagation(); setProjectSwitcherOpen(!projectSwitcherOpen); setUserMenuOpen(false); }}
+          >
+            {projectName}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {projectSwitcherOpen && (
+            <div className="project-switcher-dropdown fade-in">
+              {projects.map(p => (
+                <button
+                  key={p.id}
+                  className={`project-switcher-item${p.id === projectId ? ' active' : ''}`}
+                  onClick={() => p.id !== projectId && switchProject(p.id, p.name)}
+                >
+                  <span>📁</span>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                  {p.id === projectId && <span className="check">✓</span>}
+                </button>
+              ))}
+              {!projects.length && (
+                <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No projects yet</div>
+              )}
+              <button
+                className="project-switcher-item project-switcher-new"
+                onClick={createProject}
+              >
+                <span>➕</span> New Project
+              </button>
+            </div>
+          )}
+        </div>
+
         <div style={{ flex: 1 }} />
 
         {/* Desktop actions */}
@@ -387,6 +489,32 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
             {connectMode ? 'Selecting...' : '🔗 Connect'}
           </button>
           <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
+        </div>
+
+        {/* User Menu */}
+        <div className="user-menu">
+          <button
+            className="user-menu-trigger"
+            onClick={(e) => { e.stopPropagation(); setUserMenuOpen(!userMenuOpen); setProjectSwitcherOpen(false); }}
+          >
+            {session.user?.image ? (
+              <img className="user-avatar" src={session.user.image} alt={session.user.name || 'User'} referrerPolicy="no-referrer" />
+            ) : (
+              <div className="user-avatar-placeholder">
+                {session.user?.name?.[0]?.toUpperCase() || session.user?.email?.[0]?.toUpperCase() || '?'}
+              </div>
+            )}
+          </button>
+          {userMenuOpen && (
+            <div className="user-menu-dropdown fade-in">
+              <div className="user-menu-email">
+                Signed in as <strong>{session.user?.email || session.user?.name || 'User'}</strong>
+              </div>
+              <button className="user-menu-logout" onClick={() => signOut()}>
+                <span>🚪</span> Logout
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Mobile hamburger */}
@@ -403,6 +531,20 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
           <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
           <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
           <button onClick={() => { setSidebarOpen(true); setMenuOpen(false); }} className="btn btn-ghost btn-sm">📦 Nodes ({nodes.length})</button>
+          <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
+          {projects.map(p => (
+            <button
+              key={p.id}
+              onClick={() => { switchProject(p.id, p.name); setMenuOpen(false); }}
+              className={`btn btn-ghost btn-sm`}
+              style={{ color: p.id === projectId ? 'var(--accent)' : undefined }}
+            >
+              {p.id === projectId ? '✓' : '📁'} {p.name}
+            </button>
+          ))}
+          <button onClick={() => { createProject(); setMenuOpen(false); }} className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }}>➕ New Project</button>
+          <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
+          <button onClick={() => signOut()} className="btn btn-ghost btn-sm" style={{ color: '#f87171' }}>🚪 Logout</button>
         </div>
       )}
 
