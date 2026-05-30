@@ -4,7 +4,7 @@ import { Session } from 'next-auth';
 import { useState, useCallback, useEffect, useRef } from 'react';
 
 interface Project { id: string; name: string; }
-interface NodeItem { id: string; name: string; x: number; y: number; w: number; h: number; fnCount: number; }
+interface NodeItem { id: string; name: string; description?: string; notes?: string; x: number; y: number; w: number; h: number; fnCount: number; }
 interface FunctionItem { id: string; node_id: string; name: string; description?: string; icon: string; category: string; sort_order: number; }
 interface EdgeItem { id: string; from_node_id: string; to_node_id: string; from_function_id: string | null; to_function_id: string | null; label: string; }
 
@@ -21,9 +21,18 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
   const [editingNode, setEditingNode] = useState<string | null>(null);
   const [newFnName, setNewFnName] = useState('');
   const [newFnDesc, setNewFnDesc] = useState('');
+  const [editNodeName, setEditNodeName] = useState('');
+  const [editNodeDesc, setEditNodeDesc] = useState('');
+  const [editNodeNotes, setEditNodeNotes] = useState('');
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // ─── Create Node Modal state ───
+  const [createModal, setCreateModal] = useState(false);
+  const [newNodeName, setNewNodeName] = useState('');
+  const [newNodeDesc, setNewNodeDesc] = useState('');
+  const [newNodeNotes, setNewNodeNotes] = useState('');
 
   // AI duplicate check result modal
   const [checkModal, setCheckModal] = useState<{
@@ -56,25 +65,59 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
 
   useEffect(() => { if (projectId) loadData(); }, [projectId, loadData]);
 
+  // Populate node name in edit modal
+  useEffect(() => {
+    if (editingNode) {
+      const node = nodes.find(n => n.id === editingNode);
+      if (node) {
+        setEditNodeName(node.name);
+        setEditNodeDesc(node.description || '');
+        setEditNodeNotes(node.notes || '');
+      }
+    }
+  }, [editingNode]);
+
   const createProject = async () => {
     const name = prompt('Project name:') || 'Untitled';
     const p = await api('POST', '/projects', { name });
     setProjectId(p.id); setProjectName(p.name);
   };
 
-  const createNode = async () => {
-    if (!projectId) return;
+  const openCreateModal = () => {
+    setNewNodeName('');
+    setNewNodeDesc('');
+    setNewNodeNotes('');
+    setCreateModal(true);
+    setMenuOpen(false);
+  };
+
+  const confirmCreateNode = async () => {
+    if (!projectId || !newNodeName.trim()) return;
     const n = await api('POST', `/projects/${projectId}/nodes`, {
-      name: 'New Node', x: 100 + Math.random() * 200, y: 80 + Math.random() * 160,
+      name: newNodeName.trim(),
+      description: newNodeDesc.trim() || undefined,
+      notes: newNodeNotes.trim() || undefined,
+      x: 100 + Math.random() * 200, y: 80 + Math.random() * 160,
       w: 180, h: 80,
     });
     setNodes(prev => [...prev, { ...n, fnCount: 0 }]);
-    setMenuOpen(false);
+    setCreateModal(false);
+    setNewNodeName('');
+    setNewNodeDesc('');
+    setNewNodeNotes('');
   };
 
   const updateNodePosition = async (nodeId: string, x: number, y: number) => {
     setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, x, y } : n));
     try { await api('PATCH', `/nodes/${nodeId}`, { x, y }); } catch {}
+  };
+
+  const updateNode = async (nodeId: string, fields: { name?: string; description?: string; notes?: string }) => {
+    setNodes(prev => prev.map(n => {
+      if (n.id !== nodeId) return n;
+      return { ...n, ...fields };
+    }));
+    try { await api('PATCH', `/nodes/${nodeId}`, fields); } catch {}
   };
 
   // Add function immediately — no duplicate check
@@ -225,10 +268,16 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
         onPointerUp={(e) => handleNodePointerUp(e, n)}
       >
         <div className="node-name">{n.name}</div>
+        {(n.description || n.notes) && (
+          <div className="node-meta-tooltip">
+            {n.description && <div className="node-meta-desc">📝 {n.description.slice(0, 60)}{n.description.length > 60 ? '...' : ''}</div>}
+            {n.notes && <div className="node-meta-notes">🗒️ {n.notes.slice(0, 60)}{n.notes.length > 60 ? '...' : ''}</div>}
+          </div>
+        )}
         {fns.slice(0, 4).map(f => (
           <span key={f.id} className="node-fn-tag">{f.icon || '⚙️'} {f.name}</span>
         ))}
-        {!fns.length && <div className="node-hint">Double-click to edit</div>}
+        {!fns.length && !n.description && !n.notes && <div className="node-hint">Double-click to edit</div>}
       </div>
     );
   };
@@ -268,6 +317,9 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
         .node-name { font-weight: 600; color: var(--text-primary); margin-bottom: 6px; font-size: 13px; }
         .node-fn-tag { display: inline-block; padding: 2px 7px; border-radius: var(--radius-sm); background: var(--accent-bg); color: var(--accent); font-size: 10px; margin: 0 2px 2px 0; font-weight: 500; white-space: nowrap; }
         .node-hint { font-size: 10px; color: var(--text-muted); font-style: italic; }
+        .node-meta-tooltip { margin-bottom: 6px; }
+        .node-meta-desc { font-size: 10px; color: var(--text-muted); margin-bottom: 2px; line-height: 1.4; }
+        .node-meta-notes { font-size: 10px; color: var(--accent); opacity: 0.7; line-height: 1.4; }
 
         /* Modal overlay */
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
@@ -278,6 +330,17 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
         .fn-desc { font-size: 11px; color: var(--text-muted); margin-left: 24px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
         .textarea-desc { width: 100%; min-height: 60px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; }
         .textarea-desc:focus { outline: none; border-color: var(--accent); }
+
+        /* Node name input in modal */
+        .node-name-input { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-primary); font-family: inherit; }
+        .node-name-input:focus { outline: none; border-color: var(--accent); }
+
+        /* Trello-like function creation card */
+        .fn-create-card { margin-top: 16px; padding: 12px; background: var(--bg); border: 1px solid var(--border-hover); border-radius: var(--radius-md); }
+        .fn-create-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+        .textarea-desc-tall { width: 100%; min-height: 80px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; margin-bottom: 10px; }
+        .textarea-desc-tall:focus { outline: none; border-color: var(--accent); }
+        .fn-create-actions { display: flex; gap: 8px; }
 
         /* Mobile menu */
         .mobile-menu { position: fixed; top: 48px; right: 8px; background: var(--surface-elevated); border: 1px solid var(--border-hover); border-radius: var(--radius-md); padding: 4px; z-index: 200; box-shadow: 0 8px 32px rgba(0,0,0,0.4); display: flex; flex-direction: column; gap: 2px; min-width: 160px; }
@@ -319,7 +382,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
 
         {/* Desktop actions */}
         <div className="topbar-actions desktop">
-          <button onClick={createNode} className="btn btn-ghost btn-sm">+ Node</button>
+          <button onClick={openCreateModal} className="btn btn-ghost btn-sm">+ Node</button>
           <button onClick={() => setConnectMode(!connectMode)} className={connectMode ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
             {connectMode ? 'Selecting...' : '🔗 Connect'}
           </button>
@@ -333,7 +396,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
       {/* Mobile menu dropdown */}
       {menuOpen && (
         <div className="mobile-menu fade-in" onClick={() => setMenuOpen(false)}>
-          <button onClick={createNode} className="btn btn-ghost btn-sm">+ Node</button>
+          <button onClick={openCreateModal} className="btn btn-ghost btn-sm">+ Node</button>
           <button onClick={() => { setConnectMode(!connectMode); setMenuOpen(false); }} className={connectMode ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
             {connectMode ? 'Selecting...' : '🔗 Connect'}
           </button>
@@ -442,37 +505,116 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
         </div>
       )}
 
-      {/* Edit Node modal */}
-      {editingNode && (
-        <div className="modal-overlay fade-in mobile-sheet" onClick={() => { setEditingNode(null); setNewFnName(''); setNewFnDesc(''); }}>
+      {/* Create Node modal */}
+      {createModal && (
+        <div className="modal-overlay fade-in mobile-sheet" onClick={() => setCreateModal(false)}>
           <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)' }}>
-              ✏️ {nodes.find(n => n.id === editingNode)?.name}
-            </h3>
-            {nodeFns(editingNode).map(f => (
-              <div key={f.id}>
-                <div className="fn-row">
-                  <span>{f.icon || '⚙️'}</span>
-                  <span>{f.name}</span>
-                  <button onClick={() => deleteFunction(f.id)} className="btn btn-danger btn-sm" style={{ marginLeft: 'auto' }}>×</button>
-                </div>
-                {f.description && <div className="fn-desc">📝 {f.description}</div>}
-              </div>
-            ))}
-            {!nodeFns(editingNode).length && <div style={{ padding: 12, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No functions yet</div>}
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)' }}>🆕 Create Node</h3>
 
-            {/* Description textarea */}
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginBottom: 12 }}>
+              <label className="fn-create-label">Node Name *</label>
+              <input
+                value={newNodeName}
+                onChange={e => setNewNodeName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    confirmCreateNode();
+                  }
+                }}
+                placeholder="e.g., User Service"
+                className="input"
+                autoFocus
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label className="fn-create-label">Description (markdown, optional)</label>
               <textarea
-                value={newFnDesc}
-                onChange={e => setNewFnDesc(e.target.value)}
-                placeholder="Description (markdown) — optional, helps AI detect duplicates..."
+                value={newNodeDesc}
+                onChange={e => setNewNodeDesc(e.target.value)}
+                placeholder="Describe what this node/component does..."
                 className="textarea-desc"
               />
             </div>
 
-            {/* Name input + buttons */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <div style={{ marginBottom: 16 }}>
+              <label className="fn-create-label">Notes (markdown, optional — personal notes)</label>
+              <textarea
+                value={newNodeNotes}
+                onChange={e => setNewNodeNotes(e.target.value)}
+                placeholder="Private notes, reminders, TODOs..."
+                className="textarea-desc"
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setCreateModal(false)} className="btn btn-ghost btn-sm">Cancel</button>
+              <button onClick={confirmCreateNode} disabled={!newNodeName.trim()} className="btn btn-primary btn-sm">Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Node modal */}
+      {editingNode && (
+        <div className="modal-overlay fade-in mobile-sheet" onClick={() => { setEditingNode(null); setNewFnName(''); setNewFnDesc(''); }}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            {/* Node rename input */}
+            <div style={{ marginBottom: 16 }}>
+              <label className="fn-create-label">Node Name</label>
+              <input
+                value={editNodeName}
+                onChange={e => setEditNodeName(e.target.value)}
+                onBlur={() => { if (editNodeName.trim()) updateNode(editingNode!, { name: editNodeName.trim() }); }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (editNodeName.trim()) updateNode(editingNode!, { name: editNodeName.trim() }); (e.target as HTMLInputElement).blur(); } }}
+                placeholder="Node name..."
+                className="input node-name-input"
+                style={{ fontSize: 16, fontWeight: 600, width: '100%' }}
+              />
+            </div>
+
+            {/* Node description */}
+            <div style={{ marginBottom: 12 }}>
+              <label className="fn-create-label">Description (markdown)</label>
+              <textarea
+                value={editNodeDesc}
+                onChange={e => setEditNodeDesc(e.target.value)}
+                onBlur={() => updateNode(editingNode!, { description: editNodeDesc.trim() || null as any })}
+                placeholder="Describe what this node does..."
+                className="textarea-desc"
+              />
+            </div>
+
+            {/* Node notes */}
+            <div style={{ marginBottom: 16 }}>
+              <label className="fn-create-label">Notes (private)</label>
+              <textarea
+                value={editNodeNotes}
+                onChange={e => setEditNodeNotes(e.target.value)}
+                onBlur={() => updateNode(editingNode!, { notes: editNodeNotes.trim() || null as any })}
+                placeholder="Personal notes, reminders..."
+                className="textarea-desc"
+              />
+            </div>
+
+            {/* Existing functions list */}
+            {nodeFns(editingNode).map(f => (
+              <div key={f.id}>
+                <div className="fn-row">
+                  <span>{f.icon || '⚙️'}</span>
+                  <span style={{ flex: 1 }}>{f.name}</span>
+                  <button onClick={() => deleteFunction(f.id)} className="btn btn-danger btn-sm">×</button>
+                </div>
+                {f.description && <div className="fn-desc">📝 {f.description}</div>}
+              </div>
+            ))}
+            {!nodeFns(editingNode).length && <div style={{ padding: 12, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No functions yet — add one below</div>}
+
+            {/* Trello-like function creation card */}
+            <div className="fn-create-card">
+              <label className="fn-create-label">Function name:</label>
               <input
                 value={newFnName}
                 onChange={e => setNewFnName(e.target.value)}
@@ -482,12 +624,22 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
                     addFunction();
                   }
                 }}
-                placeholder="Function name..."
+                placeholder="e.g., userLogin"
                 className="input"
-                style={{ flex: 1 }}
               />
-              <button onClick={addFunction} className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ Add</button>
-              <button onClick={checkWithAI} className="btn btn-ghost btn-sm" style={{ flexShrink: 0 }}>🤖 Check with AI</button>
+
+              <label className="fn-create-label">Description (markdown):</label>
+              <textarea
+                value={newFnDesc}
+                onChange={e => setNewFnDesc(e.target.value)}
+                placeholder="Describe what this function does... (markdown)"
+                className="textarea-desc-tall"
+              />
+
+              <div className="fn-create-actions">
+                <button onClick={addFunction} className="btn btn-primary btn-sm">+ Add</button>
+                <button onClick={checkWithAI} className="btn btn-ghost btn-sm">🤖 Check with AI</button>
+              </div>
             </div>
           </div>
         </div>
