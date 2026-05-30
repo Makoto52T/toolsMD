@@ -2,6 +2,7 @@
 
 import { Session } from 'next-auth';
 import { signOut } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import { useState, useCallback, useEffect, useRef } from 'react';
 
 interface Project { id: string; name: string; }
@@ -9,9 +10,10 @@ interface NodeItem { id: string; name: string; description?: string; notes?: str
 interface FunctionItem { id: string; node_id: string; name: string; description?: string; icon: string; category: string; sort_order: number; }
 interface EdgeItem { id: string; from_node_id: string; to_node_id: string; from_function_id: string | null; to_function_id: string | null; label: string; }
 
-export default function AppBuilder({ session, initialProject }: { session: Session; initialProject: Project | null }) {
-  const [projectId, setProjectId] = useState<string | null>(initialProject?.id || null);
-  const [projectName, setProjectName] = useState(initialProject?.name || 'Untitled');
+export default function AppBuilder({ session, projectId: initialProjectId, projectName: initialProjectName }: { session: Session; projectId: string; projectName: string }) {
+  const router = useRouter();
+  const [projectId, setProjectId] = useState<string>(initialProjectId);
+  const [projectName, setProjectName] = useState(initialProjectName);
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [functions, setFunctions] = useState<FunctionItem[]>([]);
   const [edges, setEdges] = useState<EdgeItem[]>([]);
@@ -88,24 +90,6 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
   }, []);
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
-  // ─── Restore last project from localStorage on mount ───
-  useEffect(() => {
-    const restoreLastProject = async () => {
-      try {
-        const savedProjectId = localStorage.getItem('toolsMD_lastProject');
-        if (!savedProjectId || !initialProject || savedProjectId === initialProject.id) return;
-        // Verify the project exists and belongs to user by calling the API
-        await api('GET', `/projects/${savedProjectId}/full`);
-        switchProject(savedProjectId, '');
-      } catch {
-        // Project not found or not owned — clear stale localStorage, keep initialProject
-        try { localStorage.removeItem('toolsMD_lastProject'); } catch {}
-      }
-    };
-    restoreLastProject();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);  // run once on mount
-
   // Populate node name in edit modal
   useEffect(() => {
     if (editingNode) {
@@ -120,22 +104,14 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
 
   const createProject = async () => {
     const name = prompt('Project name:') || 'Untitled';
-    const p = await api('POST', '/projects', { name });
-    setProjectId(p.id); setProjectName(p.name);
-    setProjectSwitcherOpen(false);
-    loadProjects();
-    try { localStorage.setItem('toolsMD_lastProject', p.id); } catch {}
+    try {
+      const p = await api('POST', '/projects', { name });
+      router.push('/project/' + p.id);
+    } catch {}
   };
 
-  const switchProject = async (id: string, name: string) => {
-    setProjectId(id);
-    setProjectName(name);
-    setProjectSwitcherOpen(false);
-    setSelectedNode(null);
-    setNodes([]);
-    setFunctions([]);
-    setEdges([]);
-    try { localStorage.setItem('toolsMD_lastProject', id); } catch {}
+  const switchProject = (id: string) => {
+    router.push('/project/' + id);
   };
 
   const openCreateModal = () => {
@@ -480,7 +456,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
                 <button
                   key={p.id}
                   className={`project-switcher-item${p.id === projectId ? ' active' : ''}`}
-                  onClick={() => p.id !== projectId && switchProject(p.id, p.name)}
+                  onClick={() => p.id !== projectId && switchProject(p.id)}
                 >
                   <span>📁</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
@@ -555,7 +531,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
           {projects.map(p => (
             <button
               key={p.id}
-              onClick={() => { switchProject(p.id, p.name); setMenuOpen(false); }}
+              onClick={() => { switchProject(p.id); setMenuOpen(false); }}
               className={`btn btn-ghost btn-sm`}
               style={{ color: p.id === projectId ? 'var(--accent)' : undefined }}
             >
