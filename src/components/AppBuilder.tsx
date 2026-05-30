@@ -3,6 +3,7 @@
 import { Session } from 'next-auth';
 import { signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useState, useCallback, useEffect, useRef } from 'react';
 
 interface Project { id: string; name: string; }
@@ -437,7 +438,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
       {/* Topbar */}
       <div className="topbar">
-        <span className="topbar-logo">🧩</span>
+        <Link href="/" className="topbar-logo" style={{ textDecoration: 'none' }}>🧩</Link>
 
         {/* Project Switcher */}
         <div className="project-switcher">
