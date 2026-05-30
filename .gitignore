@@ -1,7 +1,10 @@
 node_modules/
+.next/
 data.db
 data.db-*
 data_v2.db
 data_v2.db-*
 .env
+.env.local
+client_secret*.json
 __pycache__/
