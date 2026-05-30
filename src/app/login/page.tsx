@@ -1,13 +1,14 @@
+'use client';
+import { signIn } from 'next-auth/react';
+import { useState } from 'react';
+
 export default function LoginPage() {
+  const [loading, setLoading] = useState(false);
+
   return (
     <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: '#090b10',
-      position: 'relative',
-      overflow: 'hidden',
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: '#090b10', position: 'relative', overflow: 'hidden',
     }}>
       <div style={{
         position: 'absolute', inset: 0, opacity: 0.03,
@@ -15,56 +16,40 @@ export default function LoginPage() {
         backgroundSize: '32px 32px',
       }} />
       <div style={{
-        position: 'absolute',
-        top: '-30%', left: '50%',
-        width: 800, height: 800,
-        transform: 'translateX(-50%)',
+        position: 'absolute', top: '-30%', left: '50%',
+        width: 800, height: 800, transform: 'translateX(-50%)',
         background: 'radial-gradient(circle, rgba(68,147,248,0.08) 0%, transparent 60%)',
         pointerEvents: 'none',
       }} />
+
       <div style={{ position: 'relative', zIndex: 1, textAlign: 'center', padding: '0 24px' }}>
         <div style={{ marginBottom: 48 }}>
           <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: 56, height: 56,
-            borderRadius: 12,
-            background: 'rgba(68,147,248,0.08)',
-            border: '1px solid #1a3550',
-            marginBottom: 20,
-            fontSize: 28,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            width: 56, height: 56, borderRadius: 12,
+            background: 'rgba(68,147,248,0.08)', border: '1px solid #1a3550',
+            marginBottom: 20, fontSize: 28,
           }}>
             🧩
           </div>
-          <h1 style={{
-            fontSize: 36, fontWeight: 700, color: '#e6edf3',
-            margin: '0 0 8px', letterSpacing: '-0.02em',
-          }}>
+          <h1 style={{ fontSize: 36, fontWeight: 700, color: '#e6edf3', margin: '0 0 8px', letterSpacing: '-0.02em' }}>
             toolsMD
           </h1>
-          <p style={{
-            fontSize: 15, color: '#484f58', maxWidth: 340,
-            margin: '0 auto', lineHeight: 1.6,
-          }}>
+          <p style={{ fontSize: 15, color: '#484f58', maxWidth: 340, margin: '0 auto', lineHeight: 1.6 }}>
             Visual system planner — drag nodes, connect flows, export architecture as Markdown
           </p>
         </div>
 
-        <a
-          href="/api/auth/signin/google"
+        <button
+          onClick={() => { setLoading(true); signIn('google', { callbackUrl: '/' }); }}
+          disabled={loading}
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '14px 40px',
-            borderRadius: 12,
-            background: '#fff',
-            color: '#1f1f1f',
-            fontSize: 15,
-            fontWeight: 500,
-            textDecoration: 'none',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+            display: 'inline-flex', alignItems: 'center', gap: 12,
+            padding: '14px 40px', borderRadius: 12,
+            background: loading ? '#e0e0e0' : '#fff',
+            color: '#1f1f1f', fontSize: 15, fontWeight: 500,
+            border: 'none', cursor: loading ? 'default' : 'pointer',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.2)', opacity: loading ? 0.7 : 1,
           }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24">
@@ -73,8 +58,8 @@ export default function LoginPage() {
             <path fill="#fbbc04" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
             <path fill="#ea4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
           </svg>
-          Continue with Google
-        </a>
+          {loading ? 'Redirecting...' : 'Continue with Google'}
+        </button>
 
         <p style={{ marginTop: 48, fontSize: 12, color: '#484f58' }}>
           No credit card required · Free to start
