@@ -105,136 +105,279 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
 
   const nodeFns = (nid: string) => functions.filter(f => f.node_id === nid).sort((a, b) => a.sort_order - b.sort_order);
 
-  const css = (o: Record<string, string | number>) => o as React.CSSProperties;
-
+  // ─── Empty state ─────────────────────────────────
   if (!projectId) {
     return (
-      <div className="flex min-h-screen items-center justify-center flex-col" style={{ background: 'var(--bg)' }}>
-        <h1 className="text-4xl font-bold mb-2">🧩 toolsMD</h1>
-        <p className="mb-8" style={{ color: 'var(--muted)' }}>Welcome, {session.user?.name}</p>
-        <button onClick={createProject} className="px-6 py-3 rounded-lg text-white font-medium"
-                style={{ background: 'var(--accent)' }}>+ Create Project</button>
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'var(--bg)', flexDirection: 'column', gap: 16,
+      }}>
+        <div style={{
+          width: 48, height: 48, borderRadius: 'var(--radius-md)',
+          background: 'var(--accent-bg)', border: '1px solid var(--border-accent)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
+        }}>🧩</div>
+        <h1 style={{ fontSize: 22, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>toolsMD</h1>
+        <p style={{ color: 'var(--text-muted)', fontSize: 14, margin: 0 }}>
+          Welcome, {session.user?.name}
+        </p>
+        <button
+          onClick={createProject}
+          className="btn btn-primary btn-lg"
+          style={{ marginTop: 8 }}
+        >
+          + Create Project
+        </button>
       </div>
     );
   }
 
+  // ─── Main app ─────────────────────────────────
   return (
     <div style={{ background: 'var(--bg)', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Topbar */}
-      <div style={{ display: 'flex', gap: 8, padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', alignItems: 'center' }}>
-        <b>🧩 toolsMD</b>
-        <span style={{ color: 'var(--muted)', fontSize: 13 }}>/ {projectName}</span>
+      <div style={{
+        display: 'flex', gap: 8, padding: '8px 16px',
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--surface)',
+        alignItems: 'center',
+        height: 48,
+        flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginRight: 4 }}>🧩</span>
+        <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-secondary)' }}>/</span>
+        <span style={{ fontSize: 14, color: 'var(--text-primary)' }}>{projectName}</span>
         <div style={{ flex: 1 }} />
-        <button onClick={createNode} className="px-3 py-1.5 rounded-md border text-sm" style={{ borderColor: 'var(--border)', color: 'var(--text)', background: 'transparent' }}>+ Node</button>
-        <button onClick={() => setConnectMode(!connectMode)}
-                className="px-3 py-1.5 rounded-md border text-sm"
-                style={{ borderColor: connectMode ? 'var(--accent)' : 'var(--border)', color: connectMode ? '#fff' : 'var(--text)', background: connectMode ? 'var(--accent)' : 'transparent' }}>
+        <button onClick={createNode} className="btn btn-ghost btn-sm">+ Node</button>
+        <button
+          onClick={() => setConnectMode(!connectMode)}
+          className={connectMode ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
+        >
           {connectMode ? 'Selecting...' : '🔗 Connect'}
         </button>
-        <button onClick={exportPlan} className="px-3 py-1.5 rounded-md text-sm" style={{ background: 'var(--accent)', color: '#fff', border: 'none' }}>📋 Export</button>
+        <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
       </div>
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Sidebar */}
-        <div style={{ width: 240, borderRight: '1px solid var(--border)', overflowY: 'auto', padding: 8, background: 'var(--surface)' }}>
-          {nodes.map(n => (
-            <div key={n.id} onClick={() => setSelectedNode(n.id)}
-                 style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer', marginBottom: 4, fontSize: 13,
-                          background: selectedNode === n.id ? 'rgba(68,147,248,0.1)' : 'transparent',
-                          border: selectedNode === n.id ? '1px solid var(--accent)' : '1px solid transparent' }}>
-              📦 {n.name} <span style={{ color: 'var(--muted)', fontSize: 10 }}>({nodeFns(n.id).length})</span>
+        <div style={{
+          width: 220, borderRight: '1px solid var(--border)',
+          overflowY: 'auto', padding: 8, background: 'var(--bg-raised)',
+          flexShrink: 0,
+        }}>
+          <div style={{ padding: '4px 8px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Nodes
+          </div>
+          {nodes.map(n => {
+            const fns = nodeFns(n.id);
+            const active = selectedNode === n.id;
+            return (
+              <div
+                key={n.id}
+                onClick={() => setSelectedNode(n.id)}
+                style={{
+                  padding: '8px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                  marginBottom: 2, fontSize: 13,
+                  background: active ? 'var(--accent-bg)' : 'transparent',
+                  border: active ? '1px solid var(--border-accent)' : '1px solid transparent',
+                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+              >
+                <span style={{ opacity: 0.5 }}>📦</span>
+                {n.name}
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)' }}>{fns.length}</span>
+              </div>
+            );
+          })}
+          {!nodes.length && (
+            <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              No nodes yet
             </div>
-          ))}
+          )}
         </div>
 
         {/* Canvas */}
-        <div onClick={() => setSelectedNode(null)}
-             style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <div
+          onClick={() => setSelectedNode(null)}
+          style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
+        >
+          {/* Grid dots */}
+          <div style={{
+            position: 'absolute', inset: 0, opacity: 0.025,
+            backgroundImage: 'radial-gradient(circle, var(--text-muted) 1px, transparent 1px)',
+            backgroundSize: '24px 24px',
+            pointerEvents: 'none',
+          }} />
+
+          {/* Edges */}
           <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
             {edges.map(e => {
               const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
               if (!fn || !tn) return null;
-              return <line key={e.id} x1={fn.x + fn.w} y1={fn.y + 30} x2={tn.x} y2={tn.y + 30} stroke="var(--border)" strokeWidth={2} />;
+              return (
+                <line
+                  key={e.id}
+                  x1={fn.x + fn.w} y1={fn.y + 30}
+                  x2={tn.x} y2={tn.y + 30}
+                  stroke="var(--border-hover)"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                />
+              );
             })}
           </svg>
+
+          {/* Nodes */}
           {nodes.map(n => {
             const fns = nodeFns(n.id);
             const isConn = connectMode && (connectFirst === n.id || connectSecond === n.id);
+            const active = selectedNode === n.id;
             return (
-              <div key={n.id}
-                   onClick={(e) => {
-                     e.stopPropagation();
-                     if (connectMode) {
-                       if (!connectFirst) setConnectFirst(n.id);
-                       else if (!connectSecond) { setConnectSecond(n.id); }
-                     } else {
-                       setSelectedNode(n.id);
-                     }
-                   }}
-                   onDoubleClick={() => setEditingNode(n.id)}
-                   style={{
-                     position: 'absolute', left: n.x, top: n.y, width: n.w, minHeight: 60,
-                     background: 'var(--surface)',
-                     border: `1.5px solid ${selectedNode === n.id ? 'var(--accent)' : isConn ? 'orange' : 'var(--border)'}`,
-                     borderRadius: 10, padding: '10px 12px', cursor: 'move', fontSize: 12,
-                   }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>{n.name}</div>
-                {fns.slice(0, 3).map(f => (
-                  <span key={f.id} style={{ display: 'inline-block', padding: '2px 6px', borderRadius: 8, background: 'rgba(68,147,248,0.1)', color: 'var(--accent)', fontSize: 10, margin: '0 2px 2px 0' }}>
+              <div
+                key={n.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (connectMode) {
+                    if (!connectFirst) setConnectFirst(n.id);
+                    else if (!connectSecond) setConnectSecond(n.id);
+                  } else {
+                    setSelectedNode(n.id);
+                  }
+                }}
+                onDoubleClick={() => setEditingNode(n.id)}
+                style={{
+                  position: 'absolute', left: n.x, top: n.y, width: n.w, minHeight: 60,
+                  background: 'var(--surface)',
+                  border: `1.5px solid ${active ? 'var(--accent)' : isConn ? '#d29922' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '12px 14px',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  boxShadow: active ? '0 0 0 3px var(--accent-ring)' : '0 2px 8px rgba(0,0,0,0.2)',
+                }}
+              >
+                <div style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8, fontSize: 14 }}>
+                  {n.name}
+                </div>
+                {fns.slice(0, 4).map(f => (
+                  <span
+                    key={f.id}
+                    style={{
+                      display: 'inline-block', padding: '3px 8px', borderRadius: 'var(--radius-sm)',
+                      background: 'var(--accent-bg)', color: 'var(--accent)',
+                      fontSize: 11, margin: '0 3px 3px 0', fontWeight: 500,
+                    }}
+                  >
                     {f.icon || '⚙️'} {f.name}
                   </span>
                 ))}
-                {!fns.length && <div style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic' }}>Double-click to edit</div>}
+                {!fns.length && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    Double-click to edit
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Connect confirmation */}
+      {/* Connect confirmation modal */}
       {connectSecond && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, minWidth: 400 }}>
-            <h3 style={{ marginBottom: 16 }}>🔗 Connect</h3>
-            <p>{nodes.find(n => n.id === connectFirst)?.name} → {nodes.find(n => n.id === connectSecond)?.name}</p>
-            <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setConnectSecond(null); setConnectFirst(null); }} className="px-4 py-2 rounded-md border text-sm" style={{ borderColor: 'var(--border)', color: 'var(--text)', background: 'transparent' }}>Cancel</button>
-              <button onClick={confirmConnect} className="px-4 py-2 rounded-md text-sm text-white" style={{ background: 'var(--accent)', border: 'none' }}>Connect</button>
+        <div
+          className="fade-in"
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+          }}
+        >
+          <div className="card" style={{ minWidth: 360 }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)' }}>
+              🔗 Connect Nodes
+            </h3>
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 20px' }}>
+              {nodes.find(n => n.id === connectFirst)?.name}
+              <span style={{ margin: '0 8px', color: 'var(--accent)' }}>→</span>
+              {nodes.find(n => n.id === connectSecond)?.name}
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setConnectSecond(null); setConnectFirst(null); }}
+                className="btn btn-ghost btn-sm"
+              >
+                Cancel
+              </button>
+              <button onClick={confirmConnect} className="btn btn-primary btn-sm">
+                Connect
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Edit Node Modal */}
+      {/* Edit Node modal */}
       {editingNode && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
-             onClick={() => setEditingNode(null)}>
-          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 24, minWidth: 400, maxHeight: '80vh', overflowY: 'auto' }}>
-            <h3 style={{ marginBottom: 16 }}>✏️ {nodes.find(n => n.id === editingNode)?.name}</h3>
-            <div style={{ marginBottom: 16 }}>
-              {nodeFns(editingNode).map(f => (
-                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: 'var(--bg)', borderRadius: 6, marginBottom: 4, fontSize: 13 }}>
-                  {f.icon || '⚙️'} {f.name}
-                  <button onClick={() => deleteFunction(f.id)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer' }}>×</button>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input value={newFnName} onChange={e => setNewFnName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addFunction()}
-                     placeholder="Function name..." className="px-2 py-1.5 rounded-md text-sm"
-                     style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', color: 'var(--text)' }} />
-              <button onClick={addFunction} className="px-3 py-1.5 rounded-md text-sm text-white" style={{ background: 'var(--accent)', border: 'none' }}>+ Add</button>
+        <div
+          className="fade-in"
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+          }}
+          onClick={() => setEditingNode(null)}
+        >
+          <div
+            className="card"
+            onClick={e => e.stopPropagation()}
+            style={{ minWidth: 400, maxHeight: '70vh', overflowY: 'auto' }}
+          >
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)' }}>
+              ✏️ {nodes.find(n => n.id === editingNode)?.name}
+            </h3>
+            {nodeFns(editingNode).map(f => (
+              <div
+                key={f.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '8px 12px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)',
+                  marginBottom: 4, fontSize: 13, color: 'var(--text-secondary)',
+                }}
+              >
+                <span>{f.icon || '⚙️'}</span>
+                <span>{f.name}</span>
+                <button
+                  onClick={() => deleteFunction(f.id)}
+                  className="btn btn-danger btn-sm"
+                  style={{ marginLeft: 'auto' }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {!nodeFns(editingNode).length && (
+              <div style={{ padding: 12, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                No functions yet
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+              <input
+                value={newFnName}
+                onChange={e => setNewFnName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addFunction()}
+                placeholder="Function name..."
+                className="input"
+                style={{ flex: 1 }}
+              />
+              <button onClick={addFunction} className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>
+                + Add
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {/* Toast */}
-      {toast && (
-        <div style={{ position: 'fixed', bottom: 20, left: '50%', transform: 'translateX(-50%)', padding: '8px 16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, zIndex: 200 }}>
-          {toast}
-        </div>
-      )}
+      {toast && <div className="toast">{toast}</div>}
     </div>
   );
 }
