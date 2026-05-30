@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getAuthSession } from '@/lib/get-auth-session';
 import pool from '@/lib/db';
 
 // GET /api/projects/[id]/full
@@ -9,7 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const session = await getServerSession(authOptions);
+  const session = await getAuthSession();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const userId = (session.user as any).id;
 
