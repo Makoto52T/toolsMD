@@ -522,18 +522,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
           <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
           <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
           <button onClick={() => { setSidebarOpen(true); setMenuOpen(false); }} className="btn btn-ghost btn-sm">📦 Nodes ({nodes.length})</button>
-          <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
-          {projects.map(p => (
-            <button
-              key={p.id}
-              onClick={() => { switchProject(p.id); setMenuOpen(false); }}
-              className={`btn btn-ghost btn-sm`}
-              style={{ color: p.id === projectId ? 'var(--accent)' : undefined }}
-            >
-              {p.id === projectId ? '✓' : '📁'} {p.name}
-            </button>
-          ))}
-          <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
           <button onClick={() => signOut()} className="btn btn-ghost btn-sm" style={{ color: '#f87171' }}>🚪 Logout</button>
         </div>
       )}
