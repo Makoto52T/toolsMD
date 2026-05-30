@@ -24,6 +24,9 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // Duplicate detection state
+  const [dupModal, setDupModal] = useState<{ name: string; duplicates: { name: string; confidence: number; reason: string }[] } | null>(null);
+
   // Drag state
   const dragRef = useRef<{ nodeId: string; startX: number; startY: number; nodeX: number; nodeY: number } | null>(null);
 
@@ -68,12 +71,40 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
     try { await api('PATCH', `/nodes/${nodeId}`, { x, y }); } catch {}
   };
 
-  const addFunction = async () => {
+  const addFunction = async (forceAdd?: boolean) => {
     if (!editingNode || !newFnName.trim()) return;
-    const fn = await api('POST', `/nodes/${editingNode}/functions`, { name: newFnName.trim() });
-    setFunctions(prev => [...prev, fn]);
-    setNodes(prev => prev.map(n => n.id === editingNode ? { ...n, fnCount: (n.fnCount || 0) + 1 } : n));
-    setNewFnName('');
+    const name = newFnName.trim();
+
+    // If forceAdd is false/undefined, check duplicates first
+    if (!forceAdd) {
+      try {
+        const check = await api('POST', `/nodes/${editingNode}/functions/check-duplicate`, { name });
+        const highDups = (check.duplicates || []).filter((d: any) => d.confidence > 0.7);
+        if (highDups.length > 0) {
+          setDupModal({ name, duplicates: highDups });
+          return;
+        }
+      } catch (err: any) {
+        // If check-duplicate endpoint fails, proceed normally
+        console.warn('Duplicate check failed, proceeding:', err);
+      }
+    }
+
+    // Proceed with add
+    try {
+      const fn = await api('POST', `/nodes/${editingNode}/functions`, { name, force: !!forceAdd });
+      setFunctions(prev => [...prev, fn]);
+      setNodes(prev => prev.map(n => n.id === editingNode ? { ...n, fnCount: (n.fnCount || 0) + 1 } : n));
+      setNewFnName('');
+      setDupModal(null);
+    } catch (err: any) {
+      if (err?.error === 'SEMANTIC_DUPLICATE') {
+        setDupModal({ name, duplicates: err.duplicates || [] });
+      } else {
+        setToast(err?.message || err?.error || 'Failed to add function');
+        setTimeout(() => setToast(''), 2000);
+      }
+    }
   };
 
   const deleteFunction = async (fnId: string) => {
@@ -129,7 +160,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
     if (!dragRef.current || dragRef.current.nodeId !== node.id) return;
     const dx = e.clientX - dragRef.current.startX;
     const dy = e.clientY - dragRef.current.startY;
-    setNodes(prev => prev.map(n => n.id === node.id ? { ...n, x: n.nodeX ?? n.x, y: n.nodeY ?? n.y, nodeX: dragRef.current!.nodeX + dx, nodeY: dragRef.current!.nodeY + dy } : n));
+    setNodes(prev => prev.map(n => n.id === node.id ? { ...n, x: (n as any).nodeX ?? n.x, y: (n as any).nodeY ?? n.y, nodeX: dragRef.current!.nodeX + dx, nodeY: dragRef.current!.nodeY + dy } : n));
   };
 
   const handleNodePointerUp = (e: React.PointerEvent, node: NodeItem) => {
@@ -417,12 +448,51 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
                 className="input"
                 style={{ flex: 1 }}
               />
-              <button onClick={addFunction} className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ Add</button>
+              <button onClick={() => addFunction()} className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ Add</button>
             </div>
           </div>
           <style>{`
             .fn-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: var(--radius-sm); margin-bottom: 4px; font-size: 13px; color: var(--text-secondary); }
           `}</style>
+        </div>
+      )}
+
+      {/* Duplicate confirmation modal */}
+      {dupModal && (
+        <div className="modal-overlay fade-in mobile-sheet" onClick={() => setDupModal(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 16, color: 'var(--text-primary)' }}>⚠️ ฟังก์ชันอาจซ้ำกัน</h3>
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
+              <strong>"{dupModal.name}"</strong> อาจซ้ำกับ:
+            </p>
+            {dupModal.duplicates.map((d, i) => (
+              <div key={i} style={{
+                padding: '10px 12px', background: 'var(--warning-bg, rgba(210,153,34,0.1))',
+                border: '1px solid var(--warning-border, rgba(210,153,34,0.3))',
+                borderRadius: 'var(--radius-sm)', marginBottom: 8, fontSize: 13,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>"{d.name}"</span>
+                  <span style={{
+                    fontSize: 11, padding: '1px 6px', borderRadius: 10,
+                    background: d.confidence > 0.85 ? 'rgba(220,53,69,0.2)' : 'rgba(210,153,34,0.25)',
+                    color: d.confidence > 0.85 ? '#f87171' : '#d29922',
+                    fontWeight: 600,
+                  }}>
+                    {Math.round(d.confidence * 100)}%
+                  </span>
+                </div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{d.reason}</div>
+              </div>
+            ))}
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '16px 0', textAlign: 'center' }}>
+              ต้องการเพิ่ม "{dupModal.name}" อยู่ดีหรือไม่?
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setDupModal(null)} className="btn btn-ghost btn-sm">ยกเลิก</button>
+              <button onClick={() => addFunction(true)} className="btn btn-primary btn-sm">เพิ่มอยู่ดี</button>
+            </div>
+          </div>
         </div>
       )}
 
