@@ -1,5 +1,6 @@
 node_modules/
 .next/
+next-env.d.ts
 data.db
 data.db-*
 data_v2.db
