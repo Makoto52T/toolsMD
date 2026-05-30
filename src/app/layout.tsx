@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'toolsMD — Diagram to Markdown',
-  description: 'Trello-style app builder — drag nodes, add functions, export as Markdown',
+  description: 'Trello-style app builder — drag nodes, add functions, export as Markdown.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
