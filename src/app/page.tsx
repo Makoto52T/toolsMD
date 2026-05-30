@@ -12,6 +12,11 @@ export default async function HomePage() {
   const userId = (session.user as any).id;
   const projects = await getProjects(userId);
 
+  // Auto-redirect to first project if user has any
+  if (projects.length > 0) {
+    redirect('/project/' + projects[0].id);
+  }
+
   return (
     <div
       style={{
