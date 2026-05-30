@@ -9,3 +9,4 @@ data_v2.db-*
 .env.local
 client_secret*.json
 __pycache__/
+.vercel
