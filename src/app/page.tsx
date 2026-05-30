@@ -1,11 +1,11 @@
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getAuthSession } from '@/lib/get-auth-session';
+import { redirect } from 'next/navigation';
 import { getProjects } from '@/lib/projects';
 import Link from 'next/link';
 import CreateProjectButton from '@/components/CreateProjectButton';
 
 export default async function HomePage() {
-  const session = await getServerSession(authOptions);
+  const session = await getAuthSession();
   if (!session?.user) redirect('/login');
 
   const userId = (session.user as any).id;

@@ -1,5 +1,6 @@
 import { NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
+import CredentialsProvider from 'next-auth/providers/credentials';
 import pool from '@/lib/db';
 
 export const authOptions: NextAuthOptions = {
@@ -7,6 +8,25 @@ export const authOptions: NextAuthOptions = {
     GoogleProvider({
       clientId: process.env.AUTH_GOOGLE_ID!,
       clientSecret: process.env.AUTH_GOOGLE_SECRET!,
+    }),
+    CredentialsProvider({
+      id: 'admin',
+      name: 'Admin Access',
+      credentials: {
+        secret: { label: 'Secret Key', type: 'password' },
+      },
+      async authorize(credentials) {
+        if (!credentials?.secret) return null;
+        const adminKey = process.env.ADMIN_SECRET_KEY;
+        if (!adminKey) return null;
+        if (credentials.secret !== adminKey) return null;
+        return {
+          id: 'admin-hermes',
+          name: 'Hermes Agent',
+          email: 'hermes@metabot.local',
+          image: null,
+        };
+      },
     }),
   ],
   callbacks: {
@@ -25,6 +45,7 @@ export const authOptions: NextAuthOptions = {
           [account.providerAccountId, user.email, user.name, user.image, account.providerAccountId]
         );
       }
+      // admin credentials — skip DB
       return true;
     },
   },

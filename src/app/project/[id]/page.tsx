@@ -1,5 +1,4 @@
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth';
+import { getAuthSession } from '@/lib/get-auth-session';
 import { redirect } from 'next/navigation';
 import { getProjectById } from '@/lib/projects';
 import AppBuilder from '@/components/AppBuilder';
@@ -9,7 +8,7 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await getServerSession(authOptions);
+  const session = await getAuthSession();
   if (!session?.user) redirect('/login');
 
   const userId = (session.user as any).id;
