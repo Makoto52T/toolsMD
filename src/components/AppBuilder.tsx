@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 
 interface Project { id: string; name: string; }
 interface NodeItem { id: string; name: string; x: number; y: number; w: number; h: number; fnCount: number; }
-interface FunctionItem { id: string; node_id: string; name: string; icon: string; category: string; sort_order: number; }
+interface FunctionItem { id: string; node_id: string; name: string; description?: string; icon: string; category: string; sort_order: number; }
 interface EdgeItem { id: string; from_node_id: string; to_node_id: string; from_function_id: string | null; to_function_id: string | null; label: string; }
 
 export default function AppBuilder({ session, initialProject }: { session: Session; initialProject: Project | null }) {
@@ -20,12 +20,18 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
   const [connectSecond, setConnectSecond] = useState<string | null>(null);
   const [editingNode, setEditingNode] = useState<string | null>(null);
   const [newFnName, setNewFnName] = useState('');
+  const [newFnDesc, setNewFnDesc] = useState('');
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // Duplicate detection state
-  const [dupModal, setDupModal] = useState<{ name: string; duplicates: { name: string; confidence: number; reason: string }[] } | null>(null);
+  // AI duplicate check result modal
+  const [checkModal, setCheckModal] = useState<{
+    name: string;
+    description?: string;
+    duplicates: { name: string; confidence: number; reason: string }[];
+    checking: boolean;
+  } | null>(null);
 
   // Drag state
   const dragRef = useRef<{ nodeId: string; startX: number; startY: number; nodeX: number; nodeY: number } | null>(null);
@@ -71,39 +77,40 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
     try { await api('PATCH', `/nodes/${nodeId}`, { x, y }); } catch {}
   };
 
-  const addFunction = async (forceAdd?: boolean) => {
+  // Add function immediately — no duplicate check
+  const addFunction = async () => {
     if (!editingNode || !newFnName.trim()) return;
     const name = newFnName.trim();
+    const description = newFnDesc.trim() || undefined;
 
-    // If forceAdd is false/undefined, check duplicates first
-    if (!forceAdd) {
-      try {
-        const check = await api('POST', `/nodes/${editingNode}/functions/check-duplicate`, { name });
-        const highDups = (check.duplicates || []).filter((d: any) => d.confidence > 0.7);
-        if (highDups.length > 0) {
-          setDupModal({ name, duplicates: highDups });
-          return;
-        }
-      } catch (err: any) {
-        // If check-duplicate endpoint fails, proceed normally
-        console.warn('Duplicate check failed, proceeding:', err);
-      }
-    }
-
-    // Proceed with add
     try {
-      const fn = await api('POST', `/nodes/${editingNode}/functions`, { name, force: !!forceAdd });
+      const fn = await api('POST', `/nodes/${editingNode}/functions`, { name, description });
       setFunctions(prev => [...prev, fn]);
       setNodes(prev => prev.map(n => n.id === editingNode ? { ...n, fnCount: (n.fnCount || 0) + 1 } : n));
       setNewFnName('');
-      setDupModal(null);
+      setNewFnDesc('');
     } catch (err: any) {
-      if (err?.error === 'SEMANTIC_DUPLICATE') {
-        setDupModal({ name, duplicates: err.duplicates || [] });
-      } else {
-        setToast(err?.message || err?.error || 'Failed to add function');
-        setTimeout(() => setToast(''), 2000);
-      }
+      setToast(err?.message || err?.error || 'Failed to add function');
+      setTimeout(() => setToast(''), 2000);
+    }
+  };
+
+  // AI duplicate check — manual trigger
+  const checkWithAI = async () => {
+    if (!editingNode || !newFnName.trim()) return;
+    const name = newFnName.trim();
+    const description = newFnDesc.trim() || undefined;
+
+    setCheckModal({ name, description, duplicates: [], checking: true });
+
+    try {
+      const result = await api('POST', `/nodes/${editingNode}/functions/check-duplicate`, { name, description });
+      const highDups = (result.duplicates || []).filter((d: any) => d.confidence > 0.5);
+      setCheckModal({ name, description, duplicates: highDups, checking: false });
+    } catch (err: any) {
+      setToast(err?.message || 'AI check failed');
+      setTimeout(() => setToast(''), 2000);
+      setCheckModal(null);
     }
   };
 
@@ -266,6 +273,12 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
         .modal-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; max-height: 70vh; overflow-y: auto; width: 100%; }
 
+        /* Form elements */
+        .fn-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: var(--radius-sm); margin-bottom: 4px; font-size: 13px; color: var(--text-secondary); }
+        .fn-desc { font-size: 11px; color: var(--text-muted); margin-left: 24px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+        .textarea-desc { width: 100%; min-height: 60px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; }
+        .textarea-desc:focus { outline: none; border-color: var(--accent); }
+
         /* Mobile menu */
         .mobile-menu { position: fixed; top: 48px; right: 8px; background: var(--surface-elevated); border: 1px solid var(--border-hover); border-radius: var(--radius-md); padding: 4px; z-index: 200; box-shadow: 0 8px 32px rgba(0,0,0,0.4); display: flex; flex-direction: column; gap: 2px; min-width: 160px; }
         .mobile-menu button { justify-content: flex-start; width: 100%; }
@@ -277,6 +290,10 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
 
         /* Connection indicator */
         .conn-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-sm); background: rgba(210,153,34,0.15); color: var(--warning); font-size: 12px; font-weight: 500; }
+
+        /* Spinner */
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top: 2px solid var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 4px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         /* ─── MOBILE ─── */
         @media (max-width: 768px) {
@@ -291,6 +308,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
           .modal-overlay { align-items: flex-end; }
           .topbar { padding: 8px 10px; }
           .topbar-name { max-width: 80px; }
+          .fn-desc { max-width: 200px; }
         }
       `}</style>
 
@@ -426,71 +444,117 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
 
       {/* Edit Node modal */}
       {editingNode && (
-        <div className="modal-overlay fade-in mobile-sheet" onClick={() => setEditingNode(null)}>
-          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+        <div className="modal-overlay fade-in mobile-sheet" onClick={() => { setEditingNode(null); setNewFnName(''); setNewFnDesc(''); }}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
             <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)' }}>
               ✏️ {nodes.find(n => n.id === editingNode)?.name}
             </h3>
             {nodeFns(editingNode).map(f => (
-              <div key={f.id} className="fn-row">
-                <span>{f.icon || '⚙️'}</span>
-                <span>{f.name}</span>
-                <button onClick={() => deleteFunction(f.id)} className="btn btn-danger btn-sm" style={{ marginLeft: 'auto' }}>×</button>
+              <div key={f.id}>
+                <div className="fn-row">
+                  <span>{f.icon || '⚙️'}</span>
+                  <span>{f.name}</span>
+                  <button onClick={() => deleteFunction(f.id)} className="btn btn-danger btn-sm" style={{ marginLeft: 'auto' }}>×</button>
+                </div>
+                {f.description && <div className="fn-desc">📝 {f.description}</div>}
               </div>
             ))}
             {!nodeFns(editingNode).length && <div style={{ padding: 12, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No functions yet</div>}
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+
+            {/* Description textarea */}
+            <div style={{ marginTop: 16 }}>
+              <textarea
+                value={newFnDesc}
+                onChange={e => setNewFnDesc(e.target.value)}
+                placeholder="Description (markdown) — optional, helps AI detect duplicates..."
+                className="textarea-desc"
+              />
+            </div>
+
+            {/* Name input + buttons */}
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
               <input
                 value={newFnName}
                 onChange={e => setNewFnName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addFunction()}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    addFunction();
+                  }
+                }}
                 placeholder="Function name..."
                 className="input"
                 style={{ flex: 1 }}
               />
-              <button onClick={() => addFunction()} className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ Add</button>
+              <button onClick={addFunction} className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>+ Add</button>
+              <button onClick={checkWithAI} className="btn btn-ghost btn-sm" style={{ flexShrink: 0 }}>🤖 Check with AI</button>
             </div>
           </div>
-          <style>{`
-            .fn-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: var(--radius-sm); margin-bottom: 4px; font-size: 13px; color: var(--text-secondary); }
-          `}</style>
         </div>
       )}
 
-      {/* Duplicate confirmation modal */}
-      {dupModal && (
-        <div className="modal-overlay fade-in mobile-sheet" onClick={() => setDupModal(null)}>
-          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 16, color: 'var(--text-primary)' }}>⚠️ ฟังก์ชันอาจซ้ำกัน</h3>
-            <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
-              <strong>"{dupModal.name}"</strong> อาจซ้ำกับ:
-            </p>
-            {dupModal.duplicates.map((d, i) => (
-              <div key={i} style={{
-                padding: '10px 12px', background: 'var(--warning-bg, rgba(210,153,34,0.1))',
-                border: '1px solid var(--warning-border, rgba(210,153,34,0.3))',
-                borderRadius: 'var(--radius-sm)', marginBottom: 8, fontSize: 13,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>"{d.name}"</span>
-                  <span style={{
-                    fontSize: 11, padding: '1px 6px', borderRadius: 10,
-                    background: d.confidence > 0.85 ? 'rgba(220,53,69,0.2)' : 'rgba(210,153,34,0.25)',
-                    color: d.confidence > 0.85 ? '#f87171' : '#d29922',
-                    fontWeight: 600,
-                  }}>
-                    {Math.round(d.confidence * 100)}%
-                  </span>
-                </div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{d.reason}</div>
+      {/* AI Duplicate Check Result Modal */}
+      {checkModal && (
+        <div className="modal-overlay fade-in mobile-sheet" onClick={() => setCheckModal(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 16, color: 'var(--text-primary)' }}>
+              🤖 AI Duplicate Check
+            </h3>
+
+            {checkModal.checking ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--text-secondary)' }}>
+                <span className="spinner" /> Checking with AI...
               </div>
-            ))}
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '16px 0', textAlign: 'center' }}>
-              ต้องการเพิ่ม "{dupModal.name}" อยู่ดีหรือไม่?
-            </p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setDupModal(null)} className="btn btn-ghost btn-sm">ยกเลิก</button>
-              <button onClick={() => addFunction(true)} className="btn btn-primary btn-sm">เพิ่มอยู่ดี</button>
+            ) : checkModal.duplicates.length === 0 ? (
+              <div style={{ padding: '16px 0', textAlign: 'center' }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+                <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                  No duplicates found for <strong>"{checkModal.name}"</strong>
+                </p>
+                {checkModal.description && (
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0 0' }}>
+                    {checkModal.description}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <>
+                <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
+                  <strong>"{checkModal.name}"</strong> อาจซ้ำกับ:
+                </p>
+                {checkModal.description && (
+                  <div style={{
+                    padding: '8px 12px', marginBottom: 12, fontSize: 12, color: 'var(--text-muted)',
+                    background: 'var(--bg)', borderRadius: 'var(--radius-sm)', whiteSpace: 'pre-wrap',
+                  }}>
+                    📝 {checkModal.description}
+                  </div>
+                )}
+                {checkModal.duplicates.map((d, i) => (
+                  <div key={i} style={{
+                    padding: '10px 12px', background: 'var(--warning-bg, rgba(210,153,34,0.1))',
+                    border: '1px solid var(--warning-border, rgba(210,153,34,0.3))',
+                    borderRadius: 'var(--radius-sm)', marginBottom: 8, fontSize: 13,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>"{d.name}"</span>
+                      <span style={{
+                        fontSize: 11, padding: '1px 6px', borderRadius: 10,
+                        background: d.confidence > 0.85 ? 'rgba(220,53,69,0.2)' : 'rgba(210,153,34,0.25)',
+                        color: d.confidence > 0.85 ? '#f87171' : '#d29922',
+                        fontWeight: 600,
+                      }}>
+                        {Math.round(d.confidence * 100)}%
+                      </span>
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>{d.reason}</div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button onClick={() => setCheckModal(null)} className="btn btn-ghost btn-sm">Close</button>
             </div>
           </div>
         </div>

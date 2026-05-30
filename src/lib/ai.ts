@@ -1,3 +1,8 @@
+export interface FunctionInfo {
+  name: string;
+  description?: string;
+}
+
 export interface DuplicateResult {
   name: string;
   duplicate: boolean;
@@ -5,8 +10,20 @@ export interface DuplicateResult {
   reason: string;
 }
 
-async function checkOne(newName: string, existingName: string): Promise<DuplicateResult | null> {
+function buildPrompt(newName: string, newDesc: string | undefined, existing: FunctionInfo): string {
+  const newPart = newDesc
+    ? `New function: name="${newName}", description="${newDesc}"`
+    : `New function: "${newName}" (no description)`;
+  const existingPart = existing.description
+    ? `Existing function: name="${existing.name}", description="${existing.description}"`
+    : `Existing function: "${existing.name}" (no description)`;
+  return `Compare these two functions semantically. Use both name and description to determine if they represent the same functionality.\n\n${newPart}\n${existingPart}\n\nReturn JSON: {"duplicate": boolean, "confidence": number (0-1), "reason": string (explain in one sentence, in English)}`;
+}
+
+async function checkOne(newName: string, newDescription: string | undefined, existing: FunctionInfo): Promise<DuplicateResult | null> {
   try {
+    const prompt = buildPrompt(newName, newDescription, existing);
+
     const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -18,11 +35,11 @@ async function checkOne(newName: string, existingName: string): Promise<Duplicat
         messages: [
           {
             role: 'system',
-            content: 'You are a semantic duplicate detector. Compare two function names and decide if they represent the same functionality. Return ONLY valid JSON with no extra text.',
+            content: 'You are a semantic duplicate detector for software functions. Compare two functions by their name AND description (markdown text describing what the function does). Determine if they represent the same functionality. Return ONLY valid JSON with no extra text.',
           },
           {
             role: 'user',
-            content: `Compare these function names semantically. Are "${newName}" and "${existingName}" duplicates?\n\nReturn JSON: {"duplicate": boolean, "confidence": number (0-1), "reason": string (explain in one sentence)}`,
+            content: prompt,
           },
         ],
         response_format: { type: 'json_object' },
@@ -41,26 +58,27 @@ async function checkOne(newName: string, existingName: string): Promise<Duplicat
     const jsonStr = text.replace(/^```(?:json)?\s*|\s*```$/g, '');
     const parsed = JSON.parse(jsonStr);
     return {
-      name: existingName,
+      name: existing.name,
       duplicate: parsed.duplicate,
       confidence: parsed.confidence,
       reason: parsed.reason,
     };
   } catch (err) {
-    console.warn(`AI duplicate check failed for "${existingName}":`, err);
+    console.warn(`AI duplicate check failed for "${existing.name}":`, err);
     return null;
   }
 }
 
 export async function checkSemanticDuplicate(
   newName: string,
-  existingNames: string[]
+  newDescription: string | undefined,
+  existingFunctions: FunctionInfo[]
 ): Promise<DuplicateResult[]> {
-  if (!process.env.DEEPSEEK_API_KEY || existingNames.length === 0) return [];
+  if (!process.env.DEEPSEEK_API_KEY || existingFunctions.length === 0) return [];
 
   const results: DuplicateResult[] = [];
-  for (const existingName of existingNames) {
-    const r = await checkOne(newName, existingName);
+  for (const existing of existingFunctions) {
+    const r = await checkOne(newName, newDescription, existing);
     if (r) results.push(r);
   }
   return results;
@@ -70,27 +88,32 @@ export async function checkSemanticDuplicate(
  * Lightweight local fallback: checks if names are exact/substring or share key words.
  * Used when DEEPSEEK_API_KEY is not set.
  */
-export function fastDuplicateCheck(newName: string, existingNames: string[]): DuplicateResult[] {
+export function fastDuplicateCheck(
+  newName: string,
+  newDescription: string | undefined,
+  existingFunctions: FunctionInfo[]
+): DuplicateResult[] {
   const newLower = newName.toLowerCase().trim();
-  return existingNames.map(name => {
-    const existingLower = name.toLowerCase().trim();
+  return existingFunctions.map(fn => {
+    const existingLower = fn.name.toLowerCase().trim();
     if (newLower === existingLower) {
-      return { name, duplicate: true, confidence: 1, reason: 'ชื่อตรงกันทุกประการ' };
+      return { name: fn.name, duplicate: true, confidence: 1, reason: 'Name is identical' };
     }
     if (newLower.includes(existingLower) || existingLower.includes(newLower)) {
-      return { name, duplicate: true, confidence: 0.85, reason: 'ชื่อเป็น substring ของอีกชื่อหนึ่ง' };
+      return { name: fn.name, duplicate: true, confidence: 0.85, reason: 'Name is a substring of the other' };
     }
-    return { name, duplicate: false, confidence: 0, reason: 'ไม่ซ้ำ' };
+    return { name: fn.name, duplicate: false, confidence: 0, reason: 'Not duplicate' };
   });
 }
 
 export async function checkDuplicate(
   newName: string,
-  existingNames: string[]
+  newDescription: string | undefined,
+  existingFunctions: FunctionInfo[]
 ): Promise<DuplicateResult[]> {
   if (!process.env.DEEPSEEK_API_KEY) {
     console.log('[AI] DEEPSEEK_API_KEY not set — using fast local duplicate check');
-    return fastDuplicateCheck(newName, existingNames);
+    return fastDuplicateCheck(newName, newDescription, existingFunctions);
   }
-  return checkSemanticDuplicate(newName, existingNames);
+  return checkSemanticDuplicate(newName, newDescription, existingFunctions);
 }
