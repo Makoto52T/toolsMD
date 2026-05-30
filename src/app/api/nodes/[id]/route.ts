@@ -16,6 +16,8 @@ export async function PATCH(
   if (body.w !== undefined) { updates.push('w = ?'); values.push(body.w); }
   if (body.h !== undefined) { updates.push('h = ?'); values.push(body.h); }
   if (body.name !== undefined) { updates.push('name = ?'); values.push(body.name); }
+  if (body.description !== undefined) { updates.push('description = ?'); values.push(body.description); }
+  if (body.notes !== undefined) { updates.push('notes = ?'); values.push(body.notes); }
 
   if (!updates.length) return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
 
