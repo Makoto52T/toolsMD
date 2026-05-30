@@ -2,11 +2,18 @@ import { NextAuthOptions } from 'next-auth';
 import GoogleProvider from 'next-auth/providers/google';
 import pool from '@/lib/db';
 
+const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
       clientId: process.env.AUTH_GOOGLE_ID!,
       clientSecret: process.env.AUTH_GOOGLE_SECRET!,
+      authorization: {
+        params: {
+          redirect_uri: `${baseUrl}/api/auth/google/callback`,
+        },
+      },
     }),
   ],
   callbacks: {
