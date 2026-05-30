@@ -467,6 +467,9 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               {!projects.length && (
                 <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No projects yet</div>
               )}
+              <button className="project-switcher-item project-switcher-new" onClick={() => { setProjectSwitcherOpen(false); createProject(); }}>
+                <span>➕</span> New Project
+              </button>
             </div>
           )}
         </div>
