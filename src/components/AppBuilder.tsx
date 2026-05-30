@@ -88,6 +88,24 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
   }, []);
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
+  // ─── Restore last project from localStorage on mount ───
+  useEffect(() => {
+    const restoreLastProject = async () => {
+      try {
+        const savedProjectId = localStorage.getItem('toolsMD_lastProject');
+        if (!savedProjectId || !initialProject || savedProjectId === initialProject.id) return;
+        // Verify the project exists and belongs to user by calling the API
+        await api('GET', `/projects/${savedProjectId}/full`);
+        switchProject(savedProjectId, '');
+      } catch {
+        // Project not found or not owned — clear stale localStorage, keep initialProject
+        try { localStorage.removeItem('toolsMD_lastProject'); } catch {}
+      }
+    };
+    restoreLastProject();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);  // run once on mount
+
   // Populate node name in edit modal
   useEffect(() => {
     if (editingNode) {
@@ -106,6 +124,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
     setProjectId(p.id); setProjectName(p.name);
     setProjectSwitcherOpen(false);
     loadProjects();
+    try { localStorage.setItem('toolsMD_lastProject', p.id); } catch {}
   };
 
   const switchProject = async (id: string, name: string) => {
@@ -116,6 +135,7 @@ export default function AppBuilder({ session, initialProject }: { session: Sessi
     setNodes([]);
     setFunctions([]);
     setEdges([]);
+    try { localStorage.setItem('toolsMD_lastProject', id); } catch {}
   };
 
   const openCreateModal = () => {
