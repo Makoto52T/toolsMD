@@ -1,6 +1,5 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { redirect } from 'next/navigation';
 import { getProjects } from '@/lib/projects';
 import Link from 'next/link';
 import CreateProjectButton from '@/components/CreateProjectButton';
@@ -52,18 +51,8 @@ export default async function HomePage() {
           <a href="/api/auth/signout" className="logout-link">🚪 Logout</a>
         </div>
 
-        <CreateProjectButton />
-
-        {projects.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">📂</div>
-            <p>
-              You have no projects yet.<br />
-              Create your first project to get started.
-            </p>
-          </div>
-        ) : (
-          <div className="project-grid">
+        <div className="project-grid">
+            <CreateProjectButton />
             {projects.map((p: any) => (
               <Link key={p.id} href={`/project/${p.id}`} className="project-card">
                 <span className="card-icon">📁</span>
@@ -82,7 +71,6 @@ export default async function HomePage() {
               </Link>
             ))}
           </div>
-        )}
       </div>
     </div>
   );
