@@ -1,6 +1,3 @@
-'use client';
-import { signIn } from 'next-auth/react';
-
 export default function LoginPage() {
   return (
     <div style={{
@@ -8,18 +5,15 @@ export default function LoginPage() {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'var(--bg)',
+      background: '#090b10',
       position: 'relative',
       overflow: 'hidden',
     }}>
-      {/* Background grid */}
       <div style={{
         position: 'absolute', inset: 0, opacity: 0.03,
-        backgroundImage: 'radial-gradient(circle, var(--text-muted) 1px, transparent 1px)',
+        backgroundImage: 'radial-gradient(circle, #484f58 1px, transparent 1px)',
         backgroundSize: '32px 32px',
       }} />
-
-      {/* Gradient orb */}
       <div style={{
         position: 'absolute',
         top: '-30%', left: '50%',
@@ -28,62 +22,50 @@ export default function LoginPage() {
         background: 'radial-gradient(circle, rgba(68,147,248,0.08) 0%, transparent 60%)',
         pointerEvents: 'none',
       }} />
-
       <div style={{ position: 'relative', zIndex: 1, textAlign: 'center', padding: '0 24px' }}>
-        {/* Logo + tagline */}
         <div style={{ marginBottom: 48 }}>
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
             width: 56, height: 56,
-            borderRadius: 'var(--radius-lg)',
-            background: 'var(--accent-bg)',
-            border: '1px solid var(--border-accent)',
+            borderRadius: 12,
+            background: 'rgba(68,147,248,0.08)',
+            border: '1px solid #1a3550',
             marginBottom: 20,
             fontSize: 28,
           }}>
             🧩
           </div>
           <h1 style={{
-            fontSize: 36,
-            fontWeight: 700,
-            color: 'var(--text-primary)',
-            margin: '0 0 8px',
-            letterSpacing: '-0.02em',
+            fontSize: 36, fontWeight: 700, color: '#e6edf3',
+            margin: '0 0 8px', letterSpacing: '-0.02em',
           }}>
             toolsMD
           </h1>
           <p style={{
-            fontSize: 15,
-            color: 'var(--text-muted)',
-            maxWidth: 340,
-            margin: '0 auto',
-            lineHeight: 1.6,
+            fontSize: 15, color: '#484f58', maxWidth: 340,
+            margin: '0 auto', lineHeight: 1.6,
           }}>
             Visual system planner — drag nodes, connect flows, export architecture as Markdown
           </p>
         </div>
 
-        {/* Google Sign-in */}
-        <button
-          onClick={() => signIn('google', { callbackUrl: '/' })}
+        <a
+          href="/api/auth/signin/google"
           style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 12,
             padding: '14px 40px',
-            borderRadius: 'var(--radius-lg)',
+            borderRadius: 12,
             background: '#fff',
             color: '#1f1f1f',
             fontSize: 15,
             fontWeight: 500,
-            border: 'none',
-            cursor: 'pointer',
+            textDecoration: 'none',
             boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
           }}
-          onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.3)')}
-          onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.2)')}
         >
           <svg width="20" height="20" viewBox="0 0 24 24">
             <path fill="#4285f4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
@@ -92,15 +74,10 @@ export default function LoginPage() {
             <path fill="#ea4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
           </svg>
           Continue with Google
-        </button>
+        </a>
 
-        {/* Footer */}
-        <p style={{
-          marginTop: 48,
-          fontSize: 12,
-          color: 'var(--text-muted)',
-        }}>
-          No credit card required • Free to start
+        <p style={{ marginTop: 48, fontSize: 12, color: '#484f58' }}>
+          No credit card required · Free to start
         </p>
       </div>
     </div>
