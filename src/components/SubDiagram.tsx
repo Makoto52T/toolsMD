@@ -571,7 +571,7 @@ export default function SubDiagram({
             display: 'flex',
             flexDirection: 'column',
             borderRadius: 12,
-            paddingBottom: 12,
+            paddingBottom: 16,
           }}>
             <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)', flexShrink: 0 }}>✏️ Edit Function</h3>
             <div style={{ marginBottom: 12, flexShrink: 0 }}>
@@ -606,11 +606,11 @@ export default function SubDiagram({
                 }}
               />
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingBottom: 4 }}>
               <button onClick={() => setEditingFn(null)} className="btn btn-ghost btn-sm">Cancel</button>
               <button onClick={saveEditFn} disabled={!editFnName.trim()} className="btn btn-primary btn-sm">Save</button>
             </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12, flexShrink: 0 }}>
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 16, flexShrink: 0 }}>
               <button
                 onClick={() => { deleteFunction(editingFn); setEditingFn(null); }}
                 className="btn btn-sm"

@@ -8,11 +8,11 @@ export default function LoginPage() {
   return (
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: '#090b10', position: 'relative', overflow: 'hidden',
+      background: 'var(--bg)', position: 'relative', overflow: 'hidden',
     }}>
       <div style={{
         position: 'absolute', inset: 0, opacity: 0.03,
-        backgroundImage: 'radial-gradient(circle, #484f58 1px, transparent 1px)',
+        backgroundImage: 'radial-gradient(circle, var(--text-muted) 1px, transparent 1px)',
         backgroundSize: '32px 32px',
       }} />
       <div style={{
@@ -32,10 +32,10 @@ export default function LoginPage() {
           }}>
             🧩
           </div>
-          <h1 style={{ fontSize: 36, fontWeight: 700, color: '#e6edf3', margin: '0 0 8px', letterSpacing: '-0.02em' }}>
+          <h1 style={{ fontSize: 36, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 8px', letterSpacing: '-0.02em' }}>
             toolsMD
           </h1>
-          <p style={{ fontSize: 15, color: '#484f58', maxWidth: 340, margin: '0 auto', lineHeight: 1.6 }}>
+          <p style={{ fontSize: 15, color: 'var(--text-muted)', maxWidth: 340, margin: '0 auto', lineHeight: 1.6 }}>
             Visual system planner — drag nodes, connect flows, export architecture as Markdown
           </p>
         </div>
@@ -61,7 +61,7 @@ export default function LoginPage() {
           {loading ? 'Redirecting...' : 'Continue with Google'}
         </button>
 
-        <p style={{ marginTop: 48, fontSize: 12, color: '#484f58' }}>
+        <p style={{ marginTop: 48, fontSize: 12, color: 'var(--text-muted)' }}>
           No credit card required · Free to start
         </p>
       </div>
