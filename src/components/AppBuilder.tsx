@@ -194,6 +194,16 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     setFunctions(prev => prev.filter(f => f.id !== fnId));
   };
 
+  const deleteNode = async (nodeId: string) => {
+    if (!confirm('Delete this node and all its functions?')) return;
+    await api('DELETE', `/nodes/${nodeId}`);
+    setNodes(prev => prev.filter(n => n.id !== nodeId));
+    setFunctions(prev => prev.filter(f => f.node_id !== nodeId));
+    setEdges(prev => prev.filter(e => e.from_node_id !== nodeId && e.to_node_id !== nodeId));
+    if (selectedNode === nodeId) setSelectedNode(null);
+    if (editingNode === nodeId) setEditingNode(null);
+  };
+
   const confirmConnect = async () => {
     if (!projectId || !connectFirst || !connectSecond) return;
     const e = await api('POST', `/projects/${projectId}/edges`, {
@@ -763,6 +773,15 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                 <button onClick={addFunction} className="btn btn-primary btn-sm">+ Add</button>
                 <button onClick={checkWithAI} className="btn btn-ghost btn-sm">🤖 Check with AI</button>
               </div>
+            </div>
+
+            {/* Delete Node */}
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 }}>
+              <button
+                onClick={() => { deleteNode(editingNode!); setEditingNode(null); }}
+                className="btn btn-sm"
+                style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', width: '100%' }}
+              >🗑️ Delete Node</button>
             </div>
           </div>
         </div>

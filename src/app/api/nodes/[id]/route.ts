@@ -25,3 +25,13 @@ export async function PATCH(
   await pool.query(`UPDATE nodes SET ${updates.join(', ')} WHERE id = ?`, values);
   return NextResponse.json({ success: true });
 }
+
+// DELETE /api/nodes/[id]
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  await pool.query('DELETE FROM nodes WHERE id = ?', [id]);
+  return NextResponse.json({ success: true });
+}
