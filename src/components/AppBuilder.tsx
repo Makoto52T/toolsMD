@@ -261,13 +261,14 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   };
 
   const deleteNode = async (nodeId: string) => {
-    if (!confirm('Delete this node and all its functions?')) return;
+    if (!confirm('Delete this node and all its functions?')) return false;
     await api('DELETE', `/nodes/${nodeId}`);
     setNodes(prev => prev.filter(n => n.id !== nodeId));
     setFunctions(prev => prev.filter(f => f.node_id !== nodeId));
     setEdges(prev => prev.filter(e => e.from_node_id !== nodeId && e.to_node_id !== nodeId));
     if (selectedNode === nodeId) setSelectedNode(null);
     if (editingNode === nodeId) setEditingNode(null);
+    return true;
   };
 
   const deleteEdge = async (edgeId: string) => {
@@ -673,7 +674,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         .node-name-input:focus { outline: none; border-color: var(--accent); }
 
         /* Trello-like function creation card */
-        .textarea-desc-tall { width: 100%; min-height: 80px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; margin-bottom: 10px; }
+        .textarea-desc-tall { width: 100%; min-height: 80px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; margin-bottom: 10px; }
         .textarea-desc-tall:focus { outline: none; border-color: var(--accent); }
         .fn-create-actions { display: flex; gap: 8px; }
 
@@ -840,8 +841,14 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`Delete project "${p.name}"?`)) {
-                        api('DELETE', `/projects/${p.id}`).then(() => loadProjects());
+                      if (confirm(`Delete project "${p.name}"?\n\nThis will permanently delete all nodes, functions, and edges.`)) {
+                        api('DELETE', `/projects/${p.id}`).then(() => {
+                          if (p.id === projectId) {
+                            router.push('/');
+                          } else {
+                            loadProjects();
+                          }
+                        });
                       }
                     }}
                     className="btn btn-ghost btn-sm"
@@ -855,13 +862,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               )}
               <button className="project-switcher-item project-switcher-new" onClick={() => { setProjectSwitcherOpen(false); createProject(); }}>
                 <span>➕</span> New Project
-              </button>
-              <button
-                className="project-switcher-item"
-                style={{ color: '#f87171' }}
-                onClick={() => { setProjectSwitcherOpen(false); deleteProject(); }}
-              >
-                <span>🗑️</span> Delete Project
               </button>
             </div>
           )}
@@ -1295,7 +1295,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               <input
                 value={editNodeName}
                 onChange={e => setEditNodeName(e.target.value)}
-                onBlur={() => { if (editNodeName.trim()) updateNode(editingNode!, { name: editNodeName.trim() }); }}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (editNodeName.trim()) updateNode(editingNode!, { name: editNodeName.trim() }); (e.target as HTMLInputElement).blur(); } }}
                 placeholder="Node name..."
                 className="input node-name-input"
@@ -1309,7 +1308,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               <textarea
                 value={editNodeDesc}
                 onChange={e => setEditNodeDesc(e.target.value)}
-                onBlur={() => updateNode(editingNode!, { description: editNodeDesc.trim() || null as any })}
                 placeholder="Describe what this node does..."
                 className="textarea-desc"
               />
@@ -1321,7 +1319,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               <textarea
                 value={editNodeNotes}
                 onChange={e => setEditNodeNotes(e.target.value)}
-                onBlur={() => updateNode(editingNode!, { notes: editNodeNotes.trim() || null as any })}
                 placeholder="Personal notes, reminders..."
                 className="textarea-desc"
               />
@@ -1370,10 +1367,20 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               </div>
             </div>
 
+            {/* Save / Cancel */}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+              <button onClick={() => { setEditingNode(null); setNewFnName(''); setNewFnDesc(''); }} className="btn btn-ghost btn-sm">Cancel</button>
+              <button onClick={() => {
+                if (editNodeName.trim()) updateNode(editingNode!, { name: editNodeName.trim() });
+                updateNode(editingNode!, { description: editNodeDesc.trim() || null as any });
+                updateNode(editingNode!, { notes: editNodeNotes.trim() || null as any });
+              }} className="btn btn-primary btn-sm">Save</button>
+            </div>
+
             {/* Delete Node */}
             <div style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 }}>
               <button
-                onClick={() => { deleteNode(editingNode!); setEditingNode(null); }}
+                onClick={async () => { if (await deleteNode(editingNode!)) setEditingNode(null); }}
                 className="btn btn-sm"
                 style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)', width: '100%' }}
               >🗑️ Delete Node</button>
@@ -1470,11 +1477,13 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       )}
 
       {/* Zoom controls */}
+      {nodes.length > 0 && (
       <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', gap: 4, zIndex: 50 }}>
         <button onClick={() => setZoom(z => Math.min(2, z + 0.25))} className="btn btn-ghost btn-sm">+</button>
         <button onClick={() => setZoom(1)} className="btn btn-ghost btn-sm">{Math.round(zoom * 100)}%</button>
         <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="btn btn-ghost btn-sm">−</button>
       </div>
+      )}
 
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}

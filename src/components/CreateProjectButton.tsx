@@ -43,8 +43,8 @@ export default function CreateProjectButton() {
           }}
           placeholder="Project name..."
           style={{
-            background: '#090b10', border: '1px solid #1c2333', borderRadius: 6,
-            padding: '8px 12px', color: '#e6edf3', fontSize: 14, outline: 'none',
+            background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6,
+            padding: '8px 12px', color: 'var(--text-primary)', fontSize: 14, outline: 'none',
           }}
         />
         <div style={{ display: 'flex', gap: 6 }}>
@@ -64,8 +64,8 @@ export default function CreateProjectButton() {
           <button
             onClick={() => { setShowForm(false); setName(''); }}
             style={{
-              padding: '7px 12px', borderRadius: 6, border: '1px solid #1c2333',
-              background: 'transparent', color: '#8b949e', cursor: 'pointer', fontSize: 13,
+              padding: '7px 12px', borderRadius: 6, border: '1px solid var(--border)',
+              background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 13,
             }}
           >
             Cancel
@@ -81,12 +81,12 @@ export default function CreateProjectButton() {
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '16px 18px', borderRadius: 10,
-        background: 'transparent', border: '1px dashed #1c2333',
-        color: '#8b949e', fontSize: 14, cursor: 'pointer',
+        background: 'transparent', border: '1px dashed var(--border)',
+        color: 'var(--text-secondary)', fontSize: 14, cursor: 'pointer',
         minHeight: 56, transition: 'border-color 0.15s, color 0.15s',
       }}
       onMouseEnter={e => { e.currentTarget.style.borderColor = '#4493f8'; e.currentTarget.style.color = '#4493f8'; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = '#1c2333'; e.currentTarget.style.color = '#8b949e'; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
     >
       + New Project
     </button>
