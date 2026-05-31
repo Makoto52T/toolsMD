@@ -1,12 +1,114 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* ============================================================
+   Design System — toolsMD / ProjectPlanner  (Tailwind v4)
+   ============================================================ */
+
+@theme {
+  /* Color palette */
+  --color-primary: #3b82f6;
+  --color-primary-dark: #2563eb;
+  --color-primary-light: #60a5fa;
+
+  --color-neutral-50: #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #475569;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1e293b;
+  --color-neutral-900: #0f172a;
+
+  --color-success: #10b981;
+  --color-success-dark: #059669;
+  --color-danger: #ef4444;
+  --color-danger-dark: #dc2626;
+  --color-warning: #f59e0b;
+  --color-warning-dark: #d97706;
+  --color-info: #3b82f6;
+
+  /* Typography scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+
+  /* Spacing */
+  --spacing-2: 0.5rem;
+  --spacing-4: 1rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
+
+  /* Radius + shadow */
+  --radius-card: 0.75rem;
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-card-hover: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* Font family — Inter injected via next/font as --font-inter */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Thai", sans-serif;
+}
+
+/* Plain CSS variables (for inline styles / non-Tailwind use) */
+:root {
+  --ds-primary: #3b82f6;
+  --ds-primary-dark: #2563eb;
+  --ds-success: #10b981;
+  --ds-danger: #ef4444;
+  --ds-warning: #f59e0b;
+
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-2xl: 1.5rem;
+  --font-size-3xl: 1.875rem;
+}
 
 * {
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   padding: 0;
+  font-family: var(--font-sans);
+  color: var(--color-neutral-800);
+  background: var(--color-neutral-50);
+}
+
+/* Animations */
+@keyframes ds-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes ds-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ds-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ds-toast-in {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.ds-animate-spin {
+  animation: ds-spin 0.7s linear infinite;
+}
+.ds-animate-fade-in {
+  animation: ds-fade-in 0.15s ease-out;
+}
+.ds-animate-slide-up {
+  animation: ds-slide-up 0.2s ease-out;
+}
+.ds-animate-toast-in {
+  animation: ds-toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }

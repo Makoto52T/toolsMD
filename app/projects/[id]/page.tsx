@@ -1,291 +1,596 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { v4 as uuidv4 } from 'uuid';
+import ReactFlow, {
+  Background,
+  Controls,
+  MiniMap,
+  applyNodeChanges,
+  Connection,
+  Edge as RFEdge,
+  Node as RFNode,
+  NodeChange,
+  BackgroundVariant,
+} from 'reactflow';
+import 'reactflow/dist/style.css';
 
-const NODE_TYPES = ['function', 'http-request', 'puppeteer', 'sub-project'];
+import { Button } from '@/components/Button';
+import { Modal } from '@/components/Modal';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { FullPageSpinner } from '@/components/LoadingSpinner';
+import { useToast } from '@/components/Toast';
+import { FlowNode, FlowNodeData } from '@/components/canvas/FlowNode';
+import { NODE_TYPES, metaFor } from '@/components/canvas/nodeMeta';
 
-export default function ProjectPage({ params }: { params: { id: string } }) {
-  const { id } = params;
-  const [project, setProject] = useState<any>(null);
-  const [nodes, setNodes] = useState<any[]>([]);
-  const [edges, setEdges] = useState<any[]>([]);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState<string | null>(null);
-  const [editingNode, setEditingNode] = useState<any>(null);
-  const canvasRef = useRef<HTMLDivElement>(null);
+interface Project {
+  id: string;
+  name: string;
+  description?: string;
+}
+interface ApiNode {
+  id: string;
+  type: string;
+  name: string;
+  description?: string;
+  positionX: number;
+  positionY: number;
+  config?: Record<string, unknown>;
+}
+interface ApiEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  label?: string;
+}
+
+export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const router = useRouter();
+  const toast = useToast();
+
+  const [project, setProject] = useState<Project | null>(null);
+  const [nodes, setNodes] = useState<ApiNode[]>([]);
+  const [edges, setEdges] = useState<ApiEdge[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+
+  const [editingNode, setEditingNode] = useState<ApiNode | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ApiNode | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [execResult, setExecResult] = useState<string | null>(null);
 
   useEffect(() => {
-    loadData();
-    const interval = setInterval(loadData, 3000); // Auto-save every 3s
-    return () => clearInterval(interval);
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
   }, []);
 
-  const loadData = async () => {
-    const [projRes, nodesRes, edgesRes] = await Promise.all([
-      fetch(`/api/projects/${id}`),
-      fetch(`/api/projects/${id}/nodes`),
-      fetch(`/api/projects/${id}/edges`),
-    ]);
+  const loadData = useCallback(async () => {
+    try {
+      const [projRes, nodesRes, edgesRes] = await Promise.all([
+        fetch(`/api/projects/${id}`),
+        fetch(`/api/projects/${id}/nodes`),
+        fetch(`/api/projects/${id}/edges`),
+      ]);
+      if (!projRes.ok) {
+        router.push('/dashboard');
+        return;
+      }
+      setProject(await projRes.json());
+      if (nodesRes.ok) setNodes(await nodesRes.json());
+      if (edgesRes.ok) setEdges(await edgesRes.json());
+    } catch {
+      toast.error('Failed to load project');
+    } finally {
+      setLoading(false);
+    }
+  }, [id, router, toast]);
 
-    if (!projRes.ok) return router.push('/dashboard');
-    setProject(await projRes.json());
-    if (nodesRes.ok) setNodes(await nodesRes.json());
-    if (edgesRes.ok) setEdges(await edgesRes.json());
-  };
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadData();
+  }, [loadData]);
 
+  // ---- Node CRUD ----
   const addNode = async () => {
     const newNode = {
       type: 'function',
       name: 'New Node',
       description: '',
-      positionX: Math.random() * 600,
-      positionY: Math.random() * 400,
+      positionX: 120 + Math.random() * 240,
+      positionY: 80 + Math.random() * 200,
       config: {},
     };
-
-    const res = await fetch(`/api/projects/${id}/nodes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newNode),
-    });
-
-    if (res.ok) {
-      const node = await res.json();
-      setNodes([...nodes, node]);
-    }
-  };
-
-  const deleteNode = async (nodeId: string) => {
-    await fetch(`/api/projects/${id}/nodes/${nodeId}`, { method: 'DELETE' });
-    setNodes(nodes.filter((n) => n.id !== nodeId));
-    setEdges(edges.filter((e) => e.sourceNodeId !== nodeId && e.targetNodeId !== nodeId));
-  };
-
-  const connectNodes = async (targetId: string) => {
-    if (connecting && connecting !== targetId) {
-      const res = await fetch(`/api/projects/${id}/edges`, {
+    try {
+      const res = await fetch(`/api/projects/${id}/nodes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sourceNodeId: connecting,
-          targetNodeId: targetId,
-          label: '',
-        }),
+        body: JSON.stringify(newNode),
       });
-
       if (res.ok) {
-        const edge = await res.json();
-        setEdges([...edges, edge]);
-      }
+        const created: ApiNode = await res.json();
+        setNodes((prev) => [...prev, created]);
+        toast.success('Node added');
+      } else toast.error('Failed to add node');
+    } catch {
+      toast.error('Network error');
     }
-    setConnecting(null);
   };
 
-  const deleteEdge = async (edgeId: string) => {
-    await fetch(`/api/projects/${id}/edges/${edgeId}`, { method: 'DELETE' });
-    setEdges(edges.filter((e) => e.id !== edgeId));
+  const persistPosition = useCallback(
+    (node: ApiNode) => {
+      fetch(`/api/projects/${id}/nodes/${node.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(node),
+      }).catch(() => {});
+    },
+    [id],
+  );
+
+  const doDeleteNode = async () => {
+    if (!deleteTarget) return;
+    const nodeId = deleteTarget.id;
+    try {
+      await fetch(`/api/projects/${id}/nodes/${nodeId}`, { method: 'DELETE' });
+      setNodes((prev) => prev.filter((n) => n.id !== nodeId));
+      setEdges((prev) =>
+        prev.filter((e) => e.sourceNodeId !== nodeId && e.targetNodeId !== nodeId),
+      );
+      toast.success('Node deleted');
+    } catch {
+      toast.error('Failed to delete node');
+    } finally {
+      setDeleteTarget(null);
+    }
   };
 
-  const updateNode = async () => {
+  const saveNode = async () => {
     if (!editingNode) return;
-    await fetch(`/api/projects/${id}/nodes/${editingNode.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editingNode),
-    });
-
-    setNodes(nodes.map((n) => (n.id === editingNode.id ? editingNode : n)));
-    setEditingNode(null);
+    if (!editingNode.name.trim()) {
+      toast.warning('Node name is required');
+      return;
+    }
+    setSaving(true);
+    try {
+      await fetch(`/api/projects/${id}/nodes/${editingNode.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingNode),
+      });
+      setNodes((prev) => prev.map((n) => (n.id === editingNode.id ? editingNode : n)));
+      toast.success('Node saved');
+      setEditingNode(null);
+    } catch {
+      toast.error('Failed to save node');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (!project) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  // ---- Edges ----
+  const createEdge = useCallback(
+    async (sourceNodeId: string, targetNodeId: string) => {
+      try {
+        const res = await fetch(`/api/projects/${id}/edges`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sourceNodeId, targetNodeId, label: '' }),
+        });
+        if (res.ok) {
+          const created: ApiEdge = await res.json();
+          setEdges((prev) => [...prev, created]);
+        } else toast.error('Failed to connect nodes');
+      } catch {
+        toast.error('Network error');
+      }
+    },
+    [id, toast],
+  );
+
+  const deleteEdge = useCallback(
+    async (edgeId: string) => {
+      try {
+        await fetch(`/api/projects/${id}/edges/${edgeId}`, { method: 'DELETE' });
+        setEdges((prev) => prev.filter((e) => e.id !== edgeId));
+      } catch {
+        toast.error('Failed to delete edge');
+      }
+    },
+    [id, toast],
+  );
+
+  // ---- Execute ----
+  const execute = async () => {
+    setExecuting(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/execute`, { method: 'POST' });
+      const data = await res.json();
+      setExecResult(JSON.stringify(data, null, 2));
+      if (res.ok) toast.success('Execution finished');
+      else toast.error('Execution returned an error');
+    } catch {
+      toast.error('Execution failed');
+      setExecResult('Network error during execution.');
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  // ---- React Flow mapping ----
+  const rfNodes: RFNode<FlowNodeData>[] = useMemo(
+    () =>
+      nodes.map((n) => ({
+        id: n.id,
+        type: 'tmd',
+        position: { x: n.positionX, y: n.positionY },
+        data: {
+          name: n.name,
+          type: n.type,
+          description: n.description,
+          onEdit: (nid: string) => setEditingNode(nodes.find((x) => x.id === nid) ?? null),
+          onDelete: (nid: string) => setDeleteTarget(nodes.find((x) => x.id === nid) ?? null),
+        },
+      })),
+    [nodes],
+  );
+
+  const rfEdges: RFEdge[] = useMemo(
+    () =>
+      edges.map((e) => ({
+        id: e.id,
+        source: e.sourceNodeId,
+        target: e.targetNodeId,
+        label: e.label || undefined,
+        animated: true,
+        style: { strokeWidth: 2, stroke: '#94a3b8' },
+      })),
+    [edges],
+  );
+
+  const nodeTypes = useMemo(() => ({ tmd: FlowNode }), []);
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      setNodes((prev) => {
+        const rf = applyNodeChanges(
+          changes,
+          prev.map((n) => ({
+            id: n.id,
+            type: 'tmd',
+            position: { x: n.positionX, y: n.positionY },
+            data: { name: n.name, type: n.type } as FlowNodeData,
+          })),
+        );
+        const posById = new Map(rf.map((r) => [r.id, r.position]));
+        return prev.map((n) => {
+          const p = posById.get(n.id);
+          return p ? { ...n, positionX: p.x, positionY: p.y } : n;
+        });
+      });
+      changes.forEach((c) => {
+        if (c.type === 'position' && c.dragging === false) {
+          setNodes((prev) => {
+            const node = prev.find((n) => n.id === c.id);
+            if (node) persistPosition(node);
+            return prev;
+          });
+        }
+      });
+    },
+    [persistPosition],
+  );
+
+  const onConnect = useCallback(
+    (conn: Connection) => {
+      if (conn.source && conn.target && conn.source !== conn.target) {
+        void createEdge(conn.source, conn.target);
+      }
+    },
+    [createEdge],
+  );
+
+  const onEdgesDelete = useCallback(
+    (deleted: RFEdge[]) => {
+      deleted.forEach((e) => void deleteEdge(e.id));
+    },
+    [deleteEdge],
+  );
+
+  if (loading) return <FullPageSpinner label="Loading project..." />;
 
   return (
-    <div className="flex flex-col h-screen bg-white">
-      <div className="border-b px-4 py-3 flex items-center justify-between bg-gray-50">
-        <div className="flex items-center gap-4">
-          <Link href="/dashboard" className="text-blue-600 hover:underline">
+    <div className="flex h-screen flex-col bg-white">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <Link
+            href="/dashboard"
+            className="shrink-0 text-sm font-medium text-[var(--color-primary)] hover:underline"
+          >
             ← Dashboard
           </Link>
-          <div>
-            <h1 className="text-2xl font-bold">{project.name}</h1>
-            <p className="text-gray-600 text-sm">{project.description}</p>
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-bold text-[var(--color-neutral-900)] sm:text-xl">
+              {project?.name}
+            </h1>
+            {project?.description ? (
+              <p className="truncate text-xs text-[var(--color-neutral-500)]">
+                {project.description}
+              </p>
+            ) : null}
           </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={addNode} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold">
-            + Add Node
-          </button>
-          <button
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={addNode} leftIcon={<span className="leading-none">+</span>}>
+            Add Node
+          </Button>
+          <Button
+            size="sm"
+            variant="success"
             onClick={() => window.open(`/api/projects/${id}/export`, '_blank')}
-            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-semibold"
           >
-            📄 Export .md
-          </button>
-          <button
-            onClick={async () => {
-              const res = await fetch(`/api/projects/${id}/execute`, { method: 'POST' });
-              const data = await res.json();
-              alert(JSON.stringify(data, null, 2));
-            }}
-            className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 font-semibold"
-          >
+            📄 Export
+          </Button>
+          <Button size="sm" variant="primary" onClick={execute} loading={executing}>
             ▶️ Execute
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div className="flex-1 relative overflow-hidden" ref={canvasRef}>
-        <svg className="absolute inset-0 w-full h-full pointer-events-none">
-          {edges.map((edge) => {
-            const source = nodes.find((n) => n.id === edge.sourceNodeId);
-            const target = nodes.find((n) => n.id === edge.targetNodeId);
-            if (!source || !target) return null;
-
-            const x1 = source.positionX + 75;
-            const y1 = source.positionY + 40;
-            const x2 = target.positionX + 75;
-            const y2 = target.positionY + 40;
-
-            return (
-              <g key={edge.id}>
-                <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#333" strokeWidth="2" />
-                <circle
-                  cx={(x1 + x2) / 2}
-                  cy={(y1 + y2) / 2}
-                  r="10"
-                  fill="white"
-                  stroke="#333"
-                  strokeWidth="2"
-                  className="cursor-pointer hover:fill-red-200"
-                  onClick={() => deleteEdge(edge.id)}
-                  style={{ pointerEvents: 'auto' }}
-                />
-              </g>
-            );
-          })}
-        </svg>
-
-        {nodes.map((node) => (
-          <div
-            key={node.id}
-            draggable
-            onDragEnd={(e) => {
-              const rect = canvasRef.current?.getBoundingClientRect();
-              if (rect) {
-                const newX = e.clientX - rect.left - 75;
-                const newY = e.clientY - rect.top - 40;
-                const updated = { ...node, positionX: Math.max(0, newX), positionY: Math.max(0, newY) };
-                setNodes(nodes.map((n) => (n.id === node.id ? updated : n)));
-                fetch(`/api/projects/${id}/nodes/${node.id}`, {
-                  method: 'PUT',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(updated),
-                });
-              }
-            }}
-            onClick={() => setSelectedNode(node.id)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setEditingNode(node);
-            }}
-            className={`absolute w-32 bg-white border-2 rounded p-2 cursor-move transition select-none ${
-              selectedNode === node.id ? 'border-blue-500 shadow-lg' : 'border-gray-300'
-            }`}
-            style={{ left: `${node.positionX}px`, top: `${node.positionY}px` }}
+      {/* Canvas / Mobile list */}
+      <div className="relative flex-1 overflow-hidden">
+        {isMobile ? (
+          <MobileNodeList
+            nodes={nodes}
+            edges={edges}
+            onEdit={(n) => setEditingNode(n)}
+            onDelete={(n) => setDeleteTarget(n)}
+            onConnect={createEdge}
+            onDeleteEdge={deleteEdge}
+          />
+        ) : (
+          <ReactFlow
+            nodes={rfNodes}
+            edges={rfEdges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onConnect={onConnect}
+            onEdgesDelete={onEdgesDelete}
+            fitView
+            minZoom={0.2}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
+            deleteKeyCode={['Backspace', 'Delete']}
           >
-            <div className="text-xs font-semibold mb-1 truncate">{node.name}</div>
-            <div className="text-xs text-gray-500 mb-2">{node.type}</div>
-            <div className="flex gap-1 mb-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setConnecting(node.id);
-                }}
-                className="flex-1 px-1 py-1 text-xs bg-green-500 text-white rounded hover:bg-green-600"
-              >
-                Link
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteNode(node.id);
-                }}
-                className="flex-1 px-1 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
-              >
-                Del
-              </button>
-            </div>
-            {connecting === node.id && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setConnecting(null);
-                }}
-                className="w-full px-1 py-1 text-xs bg-orange-500 text-white rounded"
-              >
-                Cancel
-              </button>
-            )}
-            {connecting && connecting !== node.id && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  connectNodes(node.id);
-                }}
-                className="w-full px-1 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600"
-              >
-                Connect
-              </button>
-            )}
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd5e1" />
+            <Controls showInteractive={false} />
+            <MiniMap
+              pannable
+              zoomable
+              nodeColor={(n) => metaFor((n.data as FlowNodeData)?.type ?? '').color}
+              className="!hidden sm:!block"
+            />
+          </ReactFlow>
+        )}
+
+        {nodes.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            <div className="mb-3 text-4xl">🧩</div>
+            <p className="text-sm font-medium text-[var(--color-neutral-600)]">No nodes yet</p>
+            <p className="text-xs text-[var(--color-neutral-400)]">
+              Click “Add Node” to start building your workflow.
+            </p>
           </div>
-        ))}
+        )}
       </div>
 
-      {editingNode && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-96">
-            <h2 className="text-lg font-bold mb-4">Edit Node</h2>
-            <input
-              type="text"
-              value={editingNode.name}
-              onChange={(e) => setEditingNode({ ...editingNode, name: e.target.value })}
-              placeholder="Node Name"
-              className="w-full px-3 py-2 border rounded mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <textarea
-              value={editingNode.description}
-              onChange={(e) => setEditingNode({ ...editingNode, description: e.target.value })}
-              placeholder="Description"
-              className="w-full px-3 py-2 border rounded mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows={3}
-            />
-            <select
-              value={editingNode.type}
-              onChange={(e) => setEditingNode({ ...editingNode, type: e.target.value })}
-              className="w-full px-3 py-2 border rounded mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {NODE_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <div className="flex gap-2">
-              <button onClick={updateNode} className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold">
-                Save
-              </button>
-              <button onClick={() => setEditingNode(null)} className="flex-1 px-4 py-2 bg-gray-400 text-white rounded hover:bg-gray-500">
-                Cancel
-              </button>
+      {/* Edit Node modal */}
+      <Modal
+        open={!!editingNode}
+        onClose={() => setEditingNode(null)}
+        title="Edit Node"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setEditingNode(null)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button onClick={saveNode} loading={saving}>
+              Save
+            </Button>
+          </div>
+        }
+      >
+        {editingNode && (
+          <div className="flex flex-col gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+                Name
+              </label>
+              <input
+                type="text"
+                value={editingNode.name}
+                onChange={(e) => setEditingNode({ ...editingNode, name: e.target.value })}
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-4 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+                Description
+              </label>
+              <textarea
+                value={editingNode.description || ''}
+                onChange={(e) => setEditingNode({ ...editingNode, description: e.target.value })}
+                rows={3}
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-4 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+                Type
+              </label>
+              <select
+                value={editingNode.type}
+                onChange={(e) => setEditingNode({ ...editingNode, type: e.target.value })}
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-4 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              >
+                {NODE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {metaFor(t).icon} {metaFor(t).label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
+
+      {/* Execute result modal */}
+      <Modal
+        open={execResult !== null}
+        onClose={() => setExecResult(null)}
+        title="Execution Result"
+        size="lg"
+        footer={
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={() => setExecResult(null)}>
+              Close
+            </Button>
+          </div>
+        }
+      >
+        <pre className="max-h-[60vh] overflow-auto rounded-lg bg-[var(--color-neutral-900)] p-4 text-xs leading-relaxed text-[var(--color-neutral-100)]">
+          {execResult}
+        </pre>
+      </Modal>
+
+      {/* Delete node confirm */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Node"
+        danger
+        confirmText="Delete"
+        message={
+          <>
+            Delete <strong>{deleteTarget?.name}</strong> and its connections?
+          </>
+        }
+        onConfirm={doDeleteNode}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </div>
+  );
+}
+
+// ---------- Mobile list editor ----------
+function MobileNodeList({
+  nodes,
+  edges,
+  onEdit,
+  onDelete,
+  onConnect,
+  onDeleteEdge,
+}: {
+  nodes: ApiNode[];
+  edges: ApiEdge[];
+  onEdit: (n: ApiNode) => void;
+  onDelete: (n: ApiNode) => void;
+  onConnect: (source: string, target: string) => void;
+  onDeleteEdge: (edgeId: string) => void;
+}) {
+  const [linkFrom, setLinkFrom] = useState<ApiNode | null>(null);
+  const nameById = useMemo(() => new Map(nodes.map((n) => [n.id, n.name])), [nodes]);
+
+  return (
+    <div className="h-full overflow-y-auto bg-[var(--color-neutral-50)] p-4">
+      <div className="mb-3 rounded-lg bg-[var(--color-info)]/10 px-3 py-2 text-xs text-[var(--color-info)]">
+        Canvas drag isn’t available on small screens — use this list editor instead.
+      </div>
+
+      <div className="flex flex-col gap-3">
+        {nodes.map((n) => {
+          const meta = metaFor(n.type);
+          const outgoing = edges.filter((e) => e.sourceNodeId === n.id);
+          return (
+            <div
+              key={n.id}
+              className="rounded-xl border-2 bg-white p-3 shadow-sm"
+              style={{ borderColor: `${meta.color}40` }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{meta.icon}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold text-[var(--color-neutral-900)]">
+                    {n.name}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+                    {meta.label}
+                  </div>
+                </div>
+              </div>
+
+              {n.description ? (
+                <p className="mt-1 text-xs text-[var(--color-neutral-500)]">{n.description}</p>
+              ) : null}
+
+              {outgoing.length > 0 && (
+                <div className="mt-2 flex flex-col gap-1">
+                  {outgoing.map((e) => (
+                    <div
+                      key={e.id}
+                      className="flex items-center justify-between rounded bg-[var(--color-neutral-100)] px-2 py-1 text-xs"
+                    >
+                      <span className="text-[var(--color-neutral-600)]">
+                        → {nameById.get(e.targetNodeId) ?? '?'}
+                      </span>
+                      <button
+                        onClick={() => onDeleteEdge(e.id)}
+                        className="text-[var(--color-danger)] hover:underline"
+                      >
+                        unlink
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-3 flex gap-2">
+                <Button size="sm" variant="secondary" onClick={() => onEdit(n)} className="flex-1">
+                  Edit
+                </Button>
+                {linkFrom?.id === n.id ? (
+                  <Button size="sm" variant="ghost" onClick={() => setLinkFrom(null)} className="flex-1">
+                    Cancel
+                  </Button>
+                ) : linkFrom ? (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => {
+                      onConnect(linkFrom.id, n.id);
+                      setLinkFrom(null);
+                    }}
+                    className="flex-1"
+                  >
+                    Connect here
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="secondary" onClick={() => setLinkFrom(n)} className="flex-1">
+                    Link
+                  </Button>
+                )}
+                <Button size="sm" variant="danger" onClick={() => onDelete(n)}>
+                  Del
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

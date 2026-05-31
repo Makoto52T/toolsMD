@@ -1,119 +1,215 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { Button } from '@/components/Button';
+import { Card } from '@/components/Card';
+import { Modal } from '@/components/Modal';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { FullPageSpinner } from '@/components/LoadingSpinner';
+import { useToast } from '@/components/Toast';
+
+interface Project {
+  id: string;
+  name: string;
+  description?: string;
+}
 
 export default function DashboardPage() {
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const [newProject, setNewProject] = useState({ name: '', description: '' });
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const router = useRouter();
+  const toast = useToast();
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const res = await fetch('/api/projects');
+      if (res.ok) {
+        setProjects(await res.json());
+      } else {
+        router.push('/');
+      }
+    } catch {
+      toast.error('Failed to load projects');
+    } finally {
+      setLoading(false);
+    }
+  }, [router, toast]);
 
   useEffect(() => {
-    loadProjects();
-  }, []);
-
-  const loadProjects = async () => {
-    const res = await fetch('/api/projects');
-    if (res.ok) {
-      setProjects(await res.json());
-    } else {
-      router.push('/');
-    }
-    setLoading(false);
-  };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadProjects();
+  }, [loadProjects]);
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProject.name.trim()) return;
-
-    const res = await fetch('/api/projects', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newProject),
-    });
-
-    if (res.ok) {
-      setNewProject({ name: '', description: '' });
-      loadProjects();
+    if (!newProject.name.trim()) {
+      toast.warning('Project name is required');
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProject),
+      });
+      if (res.ok) {
+        setNewProject({ name: '', description: '' });
+        setShowCreate(false);
+        toast.success('Project created');
+        loadProjects();
+      } else {
+        toast.error('Failed to create project');
+      }
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setCreating(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete project?')) return;
-    const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
-    if (res.ok) loadProjects();
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/projects/${deleteTarget.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        toast.success('Project deleted');
+        setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+      } else {
+        toast.error('Failed to delete project');
+      }
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (loading) return <FullPageSpinner label="Loading projects..." />;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b bg-white">
-        <div className="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-blue-600">ProjectPlanner</h1>
-          <button onClick={() => router.push('/')} className="px-4 py-2 text-gray-600 hover:text-gray-900">
+    <div className="min-h-screen bg-[var(--color-neutral-50)]">
+      <header className="border-b border-[var(--color-neutral-200)] bg-white">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
+          <h1 className="flex items-center gap-2 text-2xl font-bold text-[var(--color-primary)]">
+            <span>🗂️</span> ProjectPlanner
+          </h1>
+          <Button variant="ghost" onClick={() => router.push('/')}>
             Sign Out
-          </button>
+          </Button>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-8">
-          <h2 className="text-3xl font-bold mb-4">My Projects</h2>
-          <form onSubmit={handleCreateProject} className="bg-white rounded-lg shadow p-6 max-w-md">
+        <div className="mb-6 flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-[var(--color-neutral-900)]">My Projects</h2>
+          <Button onClick={() => setShowCreate(true)} leftIcon={<span className="text-lg leading-none">+</span>}>
+            New Project
+          </Button>
+        </div>
+
+        {projects.length === 0 ? (
+          <Card padding="lg" className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="mb-4 text-5xl">📭</div>
+            <h3 className="mb-1 text-lg font-semibold text-[var(--color-neutral-800)]">No projects yet</h3>
+            <p className="mb-6 text-sm text-[var(--color-neutral-500)]">
+              Create your first project to start building workflows.
+            </p>
+            <Button onClick={() => setShowCreate(true)}>Create your first project</Button>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {projects.map((project) => (
+              <Card key={project.id} hoverable padding="md" className="flex flex-col">
+                <h3 className="mb-1 text-lg font-semibold text-[var(--color-neutral-900)]">
+                  {project.name}
+                </h3>
+                <p className="mb-4 flex-1 text-sm text-[var(--color-neutral-500)]">
+                  {project.description || 'No description'}
+                </p>
+                <div className="flex gap-2">
+                  <Link href={`/projects/${project.id}`} className="flex-1">
+                    <Button variant="primary" size="sm" fullWidth>
+                      Open
+                    </Button>
+                  </Link>
+                  <Button variant="danger" size="sm" onClick={() => setDeleteTarget(project)}>
+                    Delete
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </main>
+
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="Create Project"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setShowCreate(false)} disabled={creating}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateProject} loading={creating}>
+              Create
+            </Button>
+          </div>
+        }
+      >
+        <form onSubmit={handleCreateProject} className="flex flex-col gap-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+              Project Name
+            </label>
             <input
               type="text"
               value={newProject.name}
               onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-              placeholder="Project Name"
-              className="w-full px-4 py-2 border rounded mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
+              placeholder="My Workflow"
+              autoFocus
+              className="w-full rounded-lg border border-[var(--color-neutral-300)] px-4 py-2.5 text-base transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
             />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+              Description
+            </label>
             <textarea
               value={newProject.description}
               onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-              placeholder="Description (optional)"
-              className="w-full px-4 py-2 border rounded mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Optional description"
               rows={3}
+              className="w-full rounded-lg border border-[var(--color-neutral-300)] px-4 py-2.5 text-base transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
             />
-            <button
-              type="submit"
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold"
-            >
-              Create Project
-            </button>
-          </form>
-        </div>
+          </div>
+        </form>
+      </Modal>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {(projects as any[]).length === 0 ? (
-            <p className="text-gray-500 col-span-3">No projects yet. Create one to get started!</p>
-          ) : (
-            (projects as any[]).map((project) => (
-              <div key={project.id} className="bg-white rounded-lg shadow hover:shadow-lg transition p-4">
-                <h3 className="text-lg font-semibold mb-2">{project.name}</h3>
-                <p className="text-gray-600 text-sm mb-4">{project.description || 'No description'}</p>
-                <div className="flex gap-2">
-                  <Link
-                    href={`/projects/${project.id}`}
-                    className="flex-1 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-center text-sm"
-                  >
-                    Open
-                  </Link>
-                  <button
-                    onClick={() => handleDelete(project.id)}
-                    className="flex-1 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 text-sm"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </main>
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete Project"
+        danger
+        loading={deleting}
+        confirmText="Delete"
+        message={
+          <>
+            Delete <strong>{deleteTarget?.name}</strong>? This cannot be undone.
+          </>
+        }
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
