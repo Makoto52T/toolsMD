@@ -47,6 +47,13 @@ export default function SubDiagram({
   const [executing, setExecuting] = useState(false);
   const [execResult, setExecResult] = useState<any>(null);
 
+  // Chain execution state
+  const [chainExecuting, setChainExecuting] = useState(false);
+  const [chainResult, setChainResult] = useState<any>(null);
+
+  // Dot connection state (click output dot → click input dot = create edge)
+  const [dotSource, setDotSource] = useState<{ fnId: string; fnName: string } | null>(null);
+
   // Create function modal
   const [createModal, setCreateModal] = useState(false);
   const [newFnName, setNewFnName] = useState('');
@@ -151,6 +158,7 @@ export default function SubDiagram({
     if (!editingFn) return;
     setExecuting(true);
     setExecResult(null);
+    setChainResult(null);
     try {
       const res = await fetch(`/api/functions/${editingFn}/execute`, { method: 'POST' });
       const data = await res.json();
@@ -159,6 +167,27 @@ export default function SubDiagram({
       setExecResult({ success: false, message: err.message || 'Execution failed' });
     } finally {
       setExecuting(false);
+    }
+  };
+
+  // Check if editing function has downstream connections (for chain run button)
+  const hasDownstreamEdges = editingFn
+    ? edges.some(e => e.from_function_id === editingFn)
+    : false;
+
+  const runChain = async () => {
+    if (!editingFn) return;
+    setChainExecuting(true);
+    setChainResult(null);
+    setExecResult(null);
+    try {
+      const res = await fetch(`/api/functions/${editingFn}/execute?chain=true`, { method: 'POST' });
+      const data = await res.json();
+      setChainResult(data);
+    } catch (err: any) {
+      setChainResult({ success: false, message: err.message || 'Chain execution failed' });
+    } finally {
+      setChainExecuting(false);
     }
   };
 
@@ -434,6 +463,23 @@ export default function SubDiagram({
         .fn-dot:hover { transform: scale(1.4); }
         .fn-dot-input { background: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.3); }
         .fn-dot-output { background: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.3); }
+        .dot-active-source { animation: dotPulse 0.8s ease-in-out infinite; box-shadow: 0 0 0 4px rgba(34,197,94,0.6); }
+        .dot-active-target { animation: dotPulse 0.8s ease-in-out infinite; box-shadow: 0 0 0 4px rgba(59,130,246,0.6); cursor: pointer; }
+        @keyframes dotPulse {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.5); }
+        }
+
+        /* n8n-style arrow indicator on connected functions */
+        .fn-arrow-indicator {
+          position: absolute;
+          bottom: -18px;
+          left: 50%;
+          transform: translateX(-50%);
+          font-size: 14px;
+          color: var(--accent);
+          pointer-events: none;
+        }
 
         .modal-card:focus-within {
           outline: 3px solid var(--accent);
@@ -587,28 +633,59 @@ export default function SubDiagram({
                   className="fn-delete-btn"
                   onClick={(e) => { e.stopPropagation(); deleteFunction(f.id); }}
                 >×</button>
-                {/* Input dots (left side, blue) */}
+                {/* Input dots (left side, blue) — click to finish edge from dotSource */}
                 {inputs.map((inp: string, ii: number) => (
                   <div
                     key={`in-${ii}`}
-                    className="fn-dot fn-dot-input"
+                    className={`fn-dot fn-dot-input${dotSource && dotSource.fnId !== f.id ? ' dot-active-target' : ''}`}
                     style={{ left: -6, top: 24 + ii * 16 }}
-                    title={`Input: ${inp}`}
+                    title={`Input: ${inp}${dotSource ? ' — Click to connect from ' + dotSource.fnName : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (dotSource && dotSource.fnId !== f.id) {
+                        // Create edge: dotSource.fnId → this function
+                        doCreateEdge(
+                          node.id,
+                          dotSource.fnId,
+                          dotSource.fnName,
+                          node.id,
+                          f.id
+                        );
+                        setDotSource(null);
+                      }
+                    }}
                   />
                 ))}
-                {/* Output dots (right side, green) */}
+                {/* Output dots (right side, green) — click to start edge */}
                 {outputs.map((out: any, oi: number) => (
                   <div
                     key={`out-${oi}`}
-                    className="fn-dot fn-dot-output"
+                    className={`fn-dot fn-dot-output${dotSource?.fnId === f.id ? ' dot-active-source' : ''}`}
                     style={{ right: -6, top: 24 + oi * 16 }}
-                    title={`Output: ${out.name || '?'} (${out.type || 'string'})${out.extract ? ' ← ' + out.extract : ''}`}
+                    title={`Output: ${out.name || '?'} (${out.type || 'string'})${out.extract ? ' ← ' + out.extract : ''}${dotSource ? '' : ' — Click to start connection'}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (dotSource) {
+                        // Cancel if clicking same dot
+                        setDotSource(null);
+                      } else {
+                        // Start edge creation from this output
+                        setDotSource({ fnId: f.id, fnName: f.name });
+                      }
+                    }}
                   />
                 ))}
                 <div className="fn-card-icon">{f.icon || '⚙️'}</div>
                 {typeBadge && <div style={{ fontSize: 8, color: 'var(--accent)', fontWeight: 600, opacity: 0.8 }}>{typeBadge}</div>}
                 <div className="fn-card-name">{f.name}</div>
                 {f.description && <div className="fn-card-desc">{f.description}</div>}
+                {/* Arrow indicator when function has downstream connections */}
+                {edges.some(e => e.from_function_id === f.id) && (
+                  <div className="fn-arrow-indicator" title="Has downstream connections">↓</div>
+                )}
+                {edges.some(e => e.to_function_id === f.id) && (
+                  <div style={{ position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)', fontSize: 14, color: '#3b82f6', pointerEvents: 'none' }} title="Has upstream connections">↑</div>
+                )}
               </div>
             );
           })}
@@ -1189,20 +1266,136 @@ export default function SubDiagram({
               </div>
             )}
 
+            {/* Chain results panel */}
+            {chainResult && chainResult.steps && (
+              <div style={{ flexShrink: 0, marginTop: 12, borderTop: '1px solid var(--accent)', paddingTop: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>🔗 Chain Run ({chainResult.total_steps || chainResult.steps.length} steps)</span>
+                  {chainResult.success !== false ? (
+                    <span style={{
+                      background: 'rgba(34,197,94,0.15)', color: '#22c55e',
+                      padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600
+                    }}>✅ Complete</span>
+                  ) : (
+                    <span style={{
+                      background: 'rgba(239,68,68,0.15)', color: '#f87171',
+                      padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600
+                    }}>❌ Failed</span>
+                  )}
+                </div>
+                {chainResult.steps.map((step: any) => (
+                  <div key={step.step} style={{
+                    border: `1px solid ${step.success !== false ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+                    borderRadius: 8,
+                    padding: '8px 10px',
+                    marginBottom: 8,
+                    background: step.success !== false ? 'rgba(34,197,94,0.04)' : 'rgba(239,68,68,0.04)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <span style={{
+                        background: 'var(--accent-bg)', color: 'var(--accent)',
+                        padding: '1px 6px', borderRadius: 6, fontSize: 10, fontWeight: 700
+                      }}>Step {step.step}</span>
+                      <span style={{ fontWeight: 600, fontSize: 12, color: 'var(--text-primary)' }}>{step.function_name}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{step.fn_type}</span>
+                      {step.status && (
+                        <span style={{
+                          background: step.success !== false ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                          color: step.success !== false ? '#22c55e' : '#f87171',
+                          padding: '1px 5px', borderRadius: 4, fontSize: 10, fontWeight: 600
+                        }}>{step.status}</span>
+                      )}
+                      {step.duration_ms != null && (
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{step.duration_ms}ms</span>
+                      )}
+                    </div>
+                    {step.extracts && Object.keys(step.extracts).length > 0 && (
+                      <div style={{ marginBottom: 4 }}>
+                        {Object.entries(step.extracts).map(([k, v]) => (
+                          <span key={k} style={{
+                            display: 'inline-block',
+                            background: 'rgba(59,130,246,0.1)',
+                            color: '#60a5fa',
+                            padding: '1px 6px',
+                            borderRadius: 6,
+                            fontSize: 10,
+                            margin: '1px 3px 1px 0',
+                            fontFamily: 'monospace',
+                          }}>{k}: {String(v)}</span>
+                        ))}
+                      </div>
+                    )}
+                    {/* Show body preview */}
+                    {step.body !== undefined && (
+                      <pre style={{
+                        background: 'var(--bg)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 4,
+                        padding: '6px 8px',
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                        color: 'var(--text-primary)',
+                        maxHeight: 80,
+                        overflow: 'auto',
+                        margin: '4px 0 0 0',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }}>{JSON.stringify(step.body, null, 2)}</pre>
+                    )}
+                    {step.message && (
+                      <div style={{ fontSize: 10, color: '#f87171', marginTop: 2 }}>{step.message}</div>
+                    )}
+                  </div>
+                ))}
+                {chainResult.final_extracts && Object.keys(chainResult.final_extracts).length > 0 && (
+                  <div style={{ marginTop: 6 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>🏁 Final accumulated values:</div>
+                    {Object.entries(chainResult.final_extracts).map(([k, v]) => (
+                      <span key={k} style={{
+                        display: 'inline-block',
+                        background: 'rgba(34,197,94,0.12)',
+                        color: '#4ade80',
+                        padding: '2px 8px',
+                        borderRadius: 8,
+                        fontSize: 11,
+                        margin: '2px 4px 2px 0',
+                        fontFamily: 'monospace',
+                      }}>{k}: {String(v)}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Footer */}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingTop: 12, borderTop: '1px solid var(--border)', marginTop: 12 }}>
               <button onClick={() => setEditingFn(null)} className="btn btn-ghost btn-sm">Cancel</button>
               {(editFnType === 'http' || editFnType === 'puppeteer') && (
-                <button
-                  onClick={runFunction}
-                  disabled={executing}
-                  className="btn btn-sm"
-                  style={{
-                    background: executing ? 'var(--border)' : 'rgba(34,197,94,0.15)',
-                    color: executing ? 'var(--text-muted)' : '#22c55e',
-                    border: executing ? '1px solid var(--border)' : '1px solid rgba(34,197,94,0.3)',
-                  }}
-                >{executing ? '⏳ Running...' : '▶ Run'}</button>
+                <>
+                  <button
+                    onClick={runFunction}
+                    disabled={executing || chainExecuting}
+                    className="btn btn-sm"
+                    style={{
+                      background: executing ? 'var(--border)' : 'rgba(34,197,94,0.15)',
+                      color: executing ? 'var(--text-muted)' : '#22c55e',
+                      border: executing ? '1px solid var(--border)' : '1px solid rgba(34,197,94,0.3)',
+                    }}
+                  >{executing ? '⏳ Running...' : '▶ Run'}</button>
+                  {hasDownstreamEdges && (
+                    <button
+                      onClick={runChain}
+                      disabled={executing || chainExecuting}
+                      className="btn btn-sm"
+                      style={{
+                        background: chainExecuting ? 'var(--border)' : 'rgba(59,130,246,0.15)',
+                        color: chainExecuting ? 'var(--text-muted)' : '#3b82f6',
+                        border: chainExecuting ? '1px solid var(--border)' : '1px solid rgba(59,130,246,0.3)',
+                      }}
+                      title="Run all connected functions in chain"
+                    >{chainExecuting ? '⏳ Chain...' : '▶ Run Chain'}</button>
+                  )}
+                </>
               )}
               <button onClick={saveEditFn} disabled={!editFnName.trim()} className="btn btn-primary btn-sm">Save</button>
             </div>
