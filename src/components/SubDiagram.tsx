@@ -36,6 +36,9 @@ export default function SubDiagram({
   const [editFnDesc, setEditFnDesc] = useState('');
   const [editFnType, setEditFnType] = useState('custom');
   const [editFnSchema, setEditFnSchema] = useState<any>({ config: {}, outputs: [] });
+  const updateSchemaConfig = (key: string, value: any) => {
+    setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, [key]: value } }));
+  };
   const [activeTab, setActiveTab] = useState<'desc' | 'config' | 'outputs'>('desc');
   const [toast, setToast] = useState('');
   const [deleteEdgeTarget, setDeleteEdgeTarget] = useState<EdgeItem | null>(null);
@@ -282,18 +285,42 @@ export default function SubDiagram({
     setEditFnName(fn.name);
     setEditFnDesc(fn.description || '');
     setEditFnType(fn.fn_type || 'custom');
-    setEditFnSchema(fn.schema || { config: {}, outputs: [] });
+    // Convert serialized headers/body back to list format for editor
+    const schema = fn.schema ? { ...fn.schema, config: { ...fn.schema.config } } : { config: {}, outputs: [] };
+    if (schema.config?.headers && typeof schema.config.headers === 'object' && !Array.isArray(schema.config.headers)) {
+      schema.config.headersList = Object.entries(schema.config.headers as Record<string,string>).map(([k,v]) => ({ key: k, value: v }));
+    }
+    if (schema.config?.body && typeof schema.config.body === 'string') {
+      try {
+        const parsed = JSON.parse(schema.config.body);
+        schema.config.bodyParams = Object.entries(parsed).map(([k,v]) => ({ key: k, value: String(v) }));
+      } catch {}
+    }
+    setEditFnSchema(schema);
     setActiveTab('desc');
   };
 
   const saveEditFn = () => {
     if (!editingFn || !editFnName.trim()) return;
-    const schema = editFnType === 'custom' ? null : editFnSchema;
+    const schema = { ...editFnSchema };
+    // Serialize headersList → headers (object)
+    if (schema.config?.headersList?.length) {
+      const headers: Record<string, string> = {};
+      schema.config.headersList.forEach((h: any) => { if (h.key) headers[h.key] = h.value; });
+      schema.config.headers = headers;
+    }
+    // Serialize bodyParams → body (JSON string)
+    if (schema.config?.bodyParams?.length) {
+      const body: Record<string, any> = {};
+      schema.config.bodyParams.forEach((p: any) => { if (p.key) body[p.key] = p.value; });
+      schema.config.body = JSON.stringify(body);
+    }
+    const finalSchema = editFnType === 'custom' ? null : { config: schema.config, outputs: schema.outputs };
     updateFunction(editingFn, {
       name: editFnName.trim(),
       description: editFnDesc.trim() || undefined as any,
       fn_type: editFnType,
-      schema: schema || undefined as any,
+      schema: finalSchema || undefined as any,
     });
     setEditingFn(null);
   };
@@ -734,24 +761,85 @@ export default function SubDiagram({
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Use {'{{variable}}'} for dynamic values</div>
                   </div>
                   <div>
-                    <label className="fn-create-label">Headers (JSON)</label>
-                    <textarea
-                      value={typeof editFnSchema.config?.headers === 'string' ? editFnSchema.config.headers : JSON.stringify(editFnSchema.config?.headers || {}, null, 2)}
-                      onChange={e => { try { setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, headers: JSON.parse(e.target.value) } })); } catch { setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, headers: e.target.value } })); } }}
-                      placeholder='{"Content-Type": "application/json"}'
-                      rows={3}
-                      style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
-                    />
+                    <label className="fn-create-label" style={{ marginBottom: 4 }}>Headers</label>
+                    {(editFnSchema.config?.headersList || []).map((h: any, i: number) => (
+                      <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                        <input
+                          value={h.key || ''}
+                          onChange={e => {
+                            const next = [...(editFnSchema.config?.headersList || [])];
+                            next[i] = { ...next[i], key: e.target.value };
+                            updateSchemaConfig('headersList', next);
+                          }}
+                          placeholder="Key"
+                          className="input" style={{ flex: 1, fontSize: 12, padding: '5px 8px' }}
+                        />
+                        <input
+                          value={h.value || ''}
+                          onChange={e => {
+                            const next = [...(editFnSchema.config?.headersList || [])];
+                            next[i] = { ...next[i], value: e.target.value };
+                            updateSchemaConfig('headersList', next);
+                          }}
+                          placeholder="Value"
+                          className="input" style={{ flex: 2, fontSize: 12, padding: '5px 8px' }}
+                        />
+                        <button
+                          onClick={() => {
+                            const next = [...(editFnSchema.config?.headersList || [])];
+                            next.splice(i, 1);
+                            updateSchemaConfig('headersList', next);
+                          }}
+                          style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 4, cursor: 'pointer', fontSize: 14, padding: '0 8px' }}
+                        >✕</button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => updateSchemaConfig('headersList', [...(editFnSchema.config?.headersList || []), { key: '', value: '' }])}
+                      style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: '1px dashed var(--border)', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', width: '100%', marginTop: 2 }}
+                    >+ Add Header</button>
                   </div>
                   <div>
-                    <label className="fn-create-label">Body</label>
-                    <textarea
-                      value={editFnSchema.config?.body || ''}
-                      onChange={e => setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, body: e.target.value } }))}
-                      placeholder='{"username": "{{username}}"}'
-                      rows={4}
-                      style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
-                    />
+                    <label className="fn-create-label" style={{ marginBottom: 4 }}>Body Parameters</label>
+                    {(editFnSchema.config?.bodyParams || []).map((p: any, i: number) => (
+                      <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+                        <input
+                          value={p.key || ''}
+                          onChange={e => {
+                            const next = [...(editFnSchema.config?.bodyParams || [])];
+                            next[i] = { ...next[i], key: e.target.value };
+                            updateSchemaConfig('bodyParams', next);
+                          }}
+                          placeholder="Key"
+                          className="input" style={{ flex: 1, fontSize: 12, padding: '5px 8px' }}
+                        />
+                        <input
+                          value={p.value || ''}
+                          onChange={e => {
+                            const next = [...(editFnSchema.config?.bodyParams || [])];
+                            next[i] = { ...next[i], value: e.target.value };
+                            updateSchemaConfig('bodyParams', next);
+                          }}
+                          placeholder="Value (use {'{{var}}'})"
+                          className="input" style={{ flex: 2, fontSize: 12, padding: '5px 8px' }}
+                        />
+                        <button
+                          onClick={() => {
+                            const next = [...(editFnSchema.config?.bodyParams || [])];
+                            next.splice(i, 1);
+                            updateSchemaConfig('bodyParams', next);
+                          }}
+                          style={{ background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 4, cursor: 'pointer', fontSize: 14, padding: '0 8px' }}
+                        >✕</button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => updateSchemaConfig('bodyParams', [...(editFnSchema.config?.bodyParams || []), { key: '', value: '' }])}
+                      style={{ fontSize: 11, color: 'var(--accent)', background: 'none', border: '1px dashed var(--border)', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', width: '100%', marginTop: 2 }}
+                    >+ Add Parameter</button>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                      Content-Type: application/json unless overridden
+                    </div>
                   </div>
                 </div>
               )}
