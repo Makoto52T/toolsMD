@@ -43,6 +43,15 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   const [dragLinePos, setDragLinePos] = useState<{ x: number; y: number } | null>(null);
   const [hoveredTargetNode, setHoveredTargetNode] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const [edgeWizard, setEdgeWizard] = useState<{
+    step: 1 | 2 | 3;
+    fromNodeId: string;
+    fromNodeName: string;
+    fromFunctionId?: string;
+    fromFunctionName?: string;
+    toNodeId?: string;
+    toNodeName?: string;
+  } | null>(null);
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -230,30 +239,39 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   };
 
   // ─── Function-to-Function Edge Connect ───
-  const createFunctionEdge = async (toNodeId: string, toFunctionId?: string) => {
-    if (!draggingEdge || !projectId) return;
+  // Core logic: creates edge from source function to target node/function
+  const doCreateFunctionEdge = async (
+    fromNodeId: string,
+    fromFunctionId: string,
+    fromFunctionName: string,
+    fromFunctionIcon: string,
+    toNodeId: string,
+    toFunctionId?: string,
+    onDone?: () => void
+  ) => {
+    if (!projectId) return;
     // Prevent self-connect
-    if (draggingEdge.fromNodeId === toNodeId) {
+    if (fromNodeId === toNodeId) {
       setToast('Cannot connect node to itself');
       setTimeout(() => setToast(''), 2000);
-      setDraggingEdge(null); setDragLinePos(null); setHoveredTargetNode(null);
+      onDone?.();
       return;
     }
     // Build label: source function name → target function/node name
     const targetNode = nodes.find(n => n.id === toNodeId);
     const targetFn = toFunctionId ? functions.find(f => f.id === toFunctionId) : null;
-    const label = `${draggingEdge.fromFunctionName} → ${targetFn?.name || targetNode?.name || '?'}`;
+    const label = `${fromFunctionName} → ${targetFn?.name || targetNode?.name || '?'}`;
 
     try {
       const edge = await api('POST', `/projects/${projectId}/edges`, {
-        from_node_id: draggingEdge.fromNodeId,
+        from_node_id: fromNodeId,
         to_node_id: toNodeId,
-        from_function_id: draggingEdge.fromFunctionId,
+        from_function_id: fromFunctionId,
         to_function_id: toFunctionId || null,
         label,
       });
       setEdges(prev => [...prev, edge]);
-      setToast(`${draggingEdge.fromFunctionIcon} ${draggingEdge.fromFunctionName} → ${targetFn?.icon || '📦'} ${targetFn?.name || targetNode?.name}`);
+      setToast(`${fromFunctionIcon} ${fromFunctionName} → ${targetFn?.icon || '📦'} ${targetFn?.name || targetNode?.name}`);
       setTimeout(() => setToast(''), 2500);
     } catch (err: any) {
       if (err?.error === 'DUPLICATE') {
@@ -263,7 +281,21 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       }
       setTimeout(() => setToast(''), 2000);
     }
-    setDraggingEdge(null); setDragLinePos(null); setHoveredTargetNode(null);
+    onDone?.();
+  };
+
+  // Drag-path (desktop): reads from draggingEdge state
+  const createFunctionEdge = async (toNodeId: string, toFunctionId?: string) => {
+    if (!draggingEdge) return;
+    await doCreateFunctionEdge(
+      draggingEdge.fromNodeId,
+      draggingEdge.fromFunctionId,
+      draggingEdge.fromFunctionName,
+      draggingEdge.fromFunctionIcon,
+      toNodeId,
+      toFunctionId,
+      () => { setDraggingEdge(null); setDragLinePos(null); setHoveredTargetNode(null); }
+    );
   };
 
   // Cancel function edge connect / long-press overlay
@@ -274,6 +306,71 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     setDragLinePos(null);
     setHoveredTargetNode(null);
     setContextMenu(null);
+    setEdgeWizard(null);
+  };
+
+  // ─── Wizard step functions ───
+  const startEdgeWizard = (nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+    const fns = nodeFns(nodeId);
+    if (!fns.length) {
+      setToast('No functions — add one first');
+      setTimeout(() => setToast(''), 2000);
+      return;
+    }
+    setEdgeWizard({ step: 1, fromNodeId: nodeId, fromNodeName: node.name });
+    setLongPressNode(null);
+    setLongPressTimer(null);
+  };
+
+  const selectSourceFunction = (fn: FunctionItem) => {
+    setEdgeWizard(prev => prev ? {
+      ...prev, step: 2,
+      fromFunctionId: fn.id,
+      fromFunctionName: fn.name,
+    } : null);
+  };
+
+  const selectTargetNode = (node: NodeItem) => {
+    if (!edgeWizard || !edgeWizard.fromFunctionId || !edgeWizard.fromFunctionName) return;
+    const fns = nodeFns(node.id);
+    if (fns.length === 0) {
+      // No functions — create edge directly (node-level)
+      doCreateFunctionEdge(
+        edgeWizard.fromNodeId, edgeWizard.fromFunctionId, edgeWizard.fromFunctionName, '⚙️',
+        node.id, undefined,
+        () => setEdgeWizard(null)
+      );
+    } else {
+      setEdgeWizard(prev => prev ? {
+        ...prev, step: 3,
+        toNodeId: node.id,
+        toNodeName: node.name,
+      } : null);
+    }
+  };
+
+  const selectTargetFunction = (fn: FunctionItem) => {
+    if (!edgeWizard || !edgeWizard.toNodeId || !edgeWizard.fromFunctionId || !edgeWizard.fromFunctionName) return;
+    doCreateFunctionEdge(
+      edgeWizard.fromNodeId, edgeWizard.fromFunctionId, edgeWizard.fromFunctionName, '⚙️',
+      edgeWizard.toNodeId, fn.id,
+      () => setEdgeWizard(null)
+    );
+  };
+
+  const selectTargetNodeWhole = () => {
+    if (!edgeWizard || !edgeWizard.toNodeId || !edgeWizard.fromFunctionId || !edgeWizard.fromFunctionName) return;
+    doCreateFunctionEdge(
+      edgeWizard.fromNodeId, edgeWizard.fromFunctionId, edgeWizard.fromFunctionName, '⚙️',
+      edgeWizard.toNodeId, undefined,
+      () => setEdgeWizard(null)
+    );
+  };
+
+  const goBackWizard = () => {
+    setEdgeWizard(prev => prev ? { ...prev, step: Math.max(1, prev.step - 1) as 1 | 2 | 3 } : null);
   };
 
   const exportPlan = () => {
@@ -316,7 +413,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   // Touch/mouse drag handlers (with long-press detection)
   const handleNodePointerDown = (e: React.PointerEvent, node: NodeItem) => {
-    if (connectMode || draggingEdge) return;
+    if (connectMode || draggingEdge || edgeWizard) return;
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = { nodeId: node.id, startX: e.clientX, startY: e.clientY, nodeX: node.x, nodeY: node.y };
@@ -324,7 +421,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     // Start long-press timer (800ms)
     if (longPressTimer) clearTimeout(longPressTimer);
     const timer = setTimeout(() => {
-      setLongPressNode(node.id);
+      startEdgeWizard(node.id);
       setLongPressTimer(null);
       dragRef.current = null; // cancel normal drag
     }, 800);
@@ -440,7 +537,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     const active = selectedNode === n.id;
     const x = n.nodeX ?? n.x;
     const y = n.nodeY ?? n.y;
-    const isLongPressed = longPressNode === n.id;
     const isTarget = hoveredTargetNode === n.id;
 
     // Check if any outgoing function-edges from this node's functions
@@ -448,7 +544,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
     return (
       <div
-        className={`node-card${active ? ' active' : ''}${isConn ? ' connecting' : ''}${isLongPressed ? ' long-press-pulse' : ''}${isTarget ? ' target-port-visible' : ''}`}
+        className={`node-card${active ? ' active' : ''}${isConn ? ' connecting' : ''}${isTarget ? ' target-port-visible' : ''}`}
         style={{ left: x, top: y, width: n.w || 180 }}
         onClick={(e) => {
           e.stopPropagation();
@@ -1042,47 +1138,107 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         </div>
       )}
 
-      {/* ─── Function Selector Overlay (long-press) ─── */}
-      {longPressNode && (
-        <div className="modal-overlay fade-in" onClick={() => cancelEdgeConnect()}>
-          <div className="modal-card fn-selector-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 320 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--text-primary)' }}>
-              {nodes.find(n => n.id === longPressNode)?.name || 'Select Function'}
-            </h3>
-            {(() => {
-              const fns = nodeFns(longPressNode);
-              if (!fns.length) {
-                return (
+      {/* ─── Edge Wizard (step-by-step mobile flow, replaces long-press drag) ─── */}
+      {edgeWizard && (
+        <div className="modal-overlay fade-in mobile-sheet" onClick={() => setEdgeWizard(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            {/* Wizard breadcrumb */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 13, color: 'var(--text-muted)' }}>
+              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                {edgeWizard.fromFunctionName || edgeWizard.fromNodeName || '...'}
+              </span>
+              <span>→</span>
+              <span className={edgeWizard.step >= 3 ? '' : 'wizard-dim'} style={edgeWizard.step < 3 ? { opacity: 0.4 } : { fontWeight: 600, color: 'var(--text-primary)' }}>
+                {edgeWizard.toNodeName || '?'}
+              </span>
+            </div>
+
+            {/* Step 1: Pick source function */}
+            {edgeWizard.step === 1 && (
+              <>
+                <h3 style={{ margin: '0 0 8px', fontSize: 15, color: 'var(--text-primary)' }}>
+                  Connect from: {edgeWizard.fromNodeName}
+                </h3>
+                <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)' }}>Select a source function:</p>
+                {nodeFns(edgeWizard.fromNodeId).map(f => (
+                  <button
+                    key={f.id}
+                    className="fn-selector-item"
+                    onClick={() => selectSourceFunction(f)}
+                  >
+                    <span style={{ fontSize: 15 }}>{f.icon || '⚙️'}</span>
+                    <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>select →</span>
+                  </button>
+                ))}
+              </>
+            )}
+
+            {/* Step 2: Pick target node */}
+            {edgeWizard.step === 2 && (
+              <>
+                <h3 style={{ margin: '0 0 4px', fontSize: 15, color: 'var(--text-primary)' }}>
+                  ⚙️ {edgeWizard.fromFunctionName}
+                </h3>
+                <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)' }}>Select target node:</p>
+                {nodes.filter(n => n.id !== edgeWizard.fromNodeId).length === 0 ? (
                   <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                    No functions — add one first
+                    No other nodes — create one first
                   </div>
-                );
-              }
-              return fns.map(f => (
+                ) : (
+                  nodes.filter(n => n.id !== edgeWizard.fromNodeId).map(n => {
+                    const count = nodeFns(n.id).length;
+                    return (
+                      <button
+                        key={n.id}
+                        className="fn-selector-item"
+                        onClick={() => selectTargetNode(n)}
+                      >
+                        <span style={{ fontSize: 15 }}>📦</span>
+                        <span style={{ flex: 1, textAlign: 'left' }}>{n.name}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{count} fn{count !== 1 ? 's' : ''}</span>
+                      </button>
+                    );
+                  })
+                )}
+              </>
+            )}
+
+            {/* Step 3: Pick target function */}
+            {edgeWizard.step === 3 && edgeWizard.toNodeId && (
+              <>
+                <h3 style={{ margin: '0 0 4px', fontSize: 15, color: 'var(--text-primary)' }}>
+                  ⚙️ {edgeWizard.fromFunctionName} → {edgeWizard.toNodeName}
+                </h3>
+                <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)' }}>Select target function:</p>
+                {nodeFns(edgeWizard.toNodeId).map(f => (
+                  <button
+                    key={f.id}
+                    className="fn-selector-item"
+                    onClick={() => selectTargetFunction(f)}
+                  >
+                    <span style={{ fontSize: 15 }}>{f.icon || '⚙️'}</span>
+                    <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
+                  </button>
+                ))}
+                <div style={{ borderTop: '2px dashed var(--border)', margin: '10px 0' }} />
                 <button
-                  key={f.id}
                   className="fn-selector-item"
-                  onClick={() => {
-                    setDraggingEdge({
-                      fromNodeId: longPressNode,
-                      fromFunctionId: f.id,
-                      fromFunctionName: f.name,
-                      fromFunctionIcon: f.icon || '⚙️',
-                    });
-                    setLongPressNode(null);
-                    setLongPressTimer(null);
-                  }}
+                  onClick={() => selectTargetNodeWhole()}
                 >
-                  <span style={{ fontSize: 15 }}>{f.icon || '⚙️'}</span>
-                  <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>drag →</span>
+                  <span style={{ fontSize: 15 }}>📦</span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>Whole node (no function)</span>
                 </button>
-              ));
-            })()}
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
-              <button onClick={() => cancelEdgeConnect()} className="btn btn-ghost btn-sm" style={{ width: '100%' }}>
-                Cancel
-              </button>
+              </>
+            )}
+
+            {/* Back / Cancel buttons */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
+              {edgeWizard.step > 1
+                ? <button onClick={goBackWizard} className="btn btn-ghost btn-sm">← Back</button>
+                : <div />
+              }
+              <button onClick={() => setEdgeWizard(null)} className="btn btn-ghost btn-sm">Cancel</button>
             </div>
           </div>
         </div>
