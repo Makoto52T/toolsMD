@@ -19,9 +19,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   const [functions, setFunctions] = useState<FunctionItem[]>([]);
   const [edges, setEdges] = useState<EdgeItem[]>([]);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [connectMode, setConnectMode] = useState(false);
-  const [connectFirst, setConnectFirst] = useState<string | null>(null);
-  const [connectSecond, setConnectSecond] = useState<string | null>(null);
   const [editingNode, setEditingNode] = useState<string | null>(null);
   const [newFnName, setNewFnName] = useState('');
   const [newFnDesc, setNewFnDesc] = useState('');
@@ -108,6 +105,17 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Auto-close edge wizard if open > 60s (safety timeout)
+  useEffect(() => {
+    if (!edgeWizard) return;
+    const timeout = setTimeout(() => {
+      setEdgeWizard(null);
+      setToast('Connection cancelled (timeout)');
+      setTimeout(() => setToast(''), 2000);
+    }, 60000);
+    return () => clearTimeout(timeout);
+  }, [edgeWizard]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -234,15 +242,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     await api('DELETE', `/edges/${edgeId}`);
     setEdges(prev => prev.filter(e => e.id !== edgeId));
     setDeleteEdgeTarget(null);
-  };
-
-  const confirmConnect = async () => {
-    if (!projectId || !connectFirst || !connectSecond) return;
-    const e = await api('POST', `/projects/${projectId}/edges`, {
-      from_node_id: connectFirst, to_node_id: connectSecond, label: '',
-    });
-    setEdges(prev => [...prev, e]);
-    setConnectFirst(null); setConnectSecond(null); setConnectMode(false);
   };
 
   // ─── Function-to-Function Edge Connect ───
@@ -420,7 +419,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   // Touch/mouse drag handlers (with long-press detection)
   const handleNodePointerDown = (e: React.PointerEvent, node: NodeItem) => {
-    if (connectMode || draggingEdge || edgeWizard) return;
+    if (draggingEdge || edgeWizard) return;
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = { nodeId: node.id, startX: e.clientX, startY: e.clientY, nodeX: node.x, nodeY: node.y };
@@ -540,7 +539,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   const NodeCard = ({ n }: { n: NodeItem & { nodeX?: number; nodeY?: number } }) => {
     const fns = nodeFns(n.id);
-    const isConn = connectMode && (connectFirst === n.id || connectSecond === n.id);
     const active = selectedNode === n.id;
     const x = n.nodeX ?? n.x;
     const y = n.nodeY ?? n.y;
@@ -551,14 +549,11 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
     return (
       <div
-        className={`node-card${active ? ' active' : ''}${isConn ? ' connecting' : ''}${isTarget ? ' target-port-visible' : ''}`}
+        className={`node-card${active ? ' active' : ''}${isTarget ? ' target-port-visible' : ''}`}
         style={{ left: x, top: y, width: n.w || 180 }}
         onClick={(e) => {
           e.stopPropagation();
-          if (connectMode) {
-            if (!connectFirst) setConnectFirst(n.id);
-            else if (!connectSecond) setConnectSecond(n.id);
-          } else if (draggingEdge) {
+          if (draggingEdge) {
             // During edge drag, clicking on a node without functions creates node-level edge
             const targetFns = nodeFns(n.id);
             if (!targetFns.length) {
@@ -973,9 +968,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         {/* Desktop actions */}
         <div className="topbar-actions desktop">
           <button onClick={openCreateModal} className="btn btn-ghost btn-sm">+ Node</button>
-          <button onClick={() => setConnectMode(!connectMode)} className={connectMode ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
-            {connectMode ? 'Selecting...' : '🔗 Connect'}
-          </button>
           <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
         </div>
 
@@ -1010,9 +1002,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       {/* Mobile toolbar — sticky below topbar */}
       <div className="mobile-toolbar">
         <button onClick={openCreateModal} className="btn btn-ghost btn-sm">+ Node</button>
-        <button onClick={() => setConnectMode(!connectMode)} className={connectMode ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
-          {connectMode ? 'Selecting...' : '🔗'}
-        </button>
         <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
         <button onClick={() => setSidebarOpen(true)} className="btn btn-ghost btn-sm">📦 {nodes.length}</button>
       </div>
@@ -1168,45 +1157,12 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
           {/* Nodes */}
           {nodes.map(n => <NodeCard key={n.id} n={n} />)}
-
-          {/* Connect mode indicator */}
-          {connectMode && (
-            <div className="toast" style={{ bottom: connectSecond ? 80 : 24 }}>
-              {connectFirst && <span className="conn-badge">{nodes.find(n => n.id === connectFirst)?.name}</span>}
-              {connectFirst && !connectSecond && ' → tap second node'}
-              {connectSecond && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span className="conn-badge">{nodes.find(n => n.id === connectFirst)?.name}</span>
-                  <span style={{ color: 'var(--accent)' }}>→</span>
-                  <span className="conn-badge">{nodes.find(n => n.id === connectSecond)?.name}</span>
-                </span>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Connect confirmation modal (existing node-to-node) */}
-      {connectSecond && (
-        <div className="modal-overlay fade-in">
-          <div className="modal-card" style={{ maxWidth: 400 }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)' }}>🔗 Connect Nodes</h3>
-            <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 20px' }}>
-              {nodes.find(n => n.id === connectFirst)?.name}
-              <span style={{ margin: '0 8px', color: 'var(--accent)' }}>→</span>
-              {nodes.find(n => n.id === connectSecond)?.name}
-            </p>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setConnectSecond(null); setConnectFirst(null); }} className="btn btn-ghost btn-sm">Cancel</button>
-              <button onClick={confirmConnect} className="btn btn-primary btn-sm">Connect</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ─── Edge Wizard (step-by-step mobile flow, replaces long-press drag) ─── */}
       {edgeWizard && (
-        <div className="modal-overlay fade-in mobile-sheet" onClick={() => setEdgeWizard(null)}>
+        <div className="modal-overlay fade-in mobile-sheet">
           <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
             {/* Wizard breadcrumb */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 13, color: 'var(--text-muted)' }}>
