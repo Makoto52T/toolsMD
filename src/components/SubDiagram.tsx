@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 
 interface NodeItem { id: string; name: string; description?: string; notes?: string; x: number; y: number; w: number; h: number; fnCount: number; }
-interface FunctionItem { id: string; node_id: string; name: string; description?: string; icon: string; category: string; sort_order: number; }
+interface FunctionItem { id: string; node_id: string; name: string; description?: string; fn_type?: string; schema?: any; icon: string; category: string; sort_order: number; }
 interface EdgeItem { id: string; from_node_id: string; to_node_id: string; from_function_id: string | null; to_function_id: string | null; label: string; }
 
 interface SubDiagramProps {
@@ -34,6 +34,9 @@ export default function SubDiagram({
   const [editingFn, setEditingFn] = useState<string | null>(null);
   const [editFnName, setEditFnName] = useState('');
   const [editFnDesc, setEditFnDesc] = useState('');
+  const [editFnType, setEditFnType] = useState('custom');
+  const [editFnSchema, setEditFnSchema] = useState<any>({ config: {}, outputs: [] });
+  const [activeTab, setActiveTab] = useState<'desc' | 'config' | 'outputs'>('desc');
   const [toast, setToast] = useState('');
   const [deleteEdgeTarget, setDeleteEdgeTarget] = useState<EdgeItem | null>(null);
 
@@ -127,7 +130,7 @@ export default function SubDiagram({
     onUpdate();
   };
 
-  const updateFunction = async (fnId: string, fields: { name?: string; description?: string }) => {
+  const updateFunction = async (fnId: string, fields: { name?: string; description?: string; fn_type?: string; schema?: any }) => {
     try {
       await api('PATCH', `/functions/${fnId}`, fields);
       onUpdate();
@@ -278,13 +281,19 @@ export default function SubDiagram({
     setEditingFn(fn.id);
     setEditFnName(fn.name);
     setEditFnDesc(fn.description || '');
+    setEditFnType(fn.fn_type || 'custom');
+    setEditFnSchema(fn.schema || { config: {}, outputs: [] });
+    setActiveTab('desc');
   };
 
   const saveEditFn = () => {
     if (!editingFn || !editFnName.trim()) return;
+    const schema = editFnType === 'custom' ? null : editFnSchema;
     updateFunction(editingFn, {
       name: editFnName.trim(),
       description: editFnDesc.trim() || undefined as any,
+      fn_type: editFnType,
+      schema: schema || undefined as any,
     });
     setEditingFn(null);
   };
@@ -364,6 +373,21 @@ export default function SubDiagram({
         }
         .fn-card:hover .fn-delete-btn,
         .fn-card.active .fn-delete-btn { opacity: 1; }
+
+        /* n8n-style input/output dots */
+        .fn-dot {
+          position: absolute;
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          border: 2px solid var(--bg);
+          z-index: 5;
+          cursor: crosshair;
+          transition: transform 0.15s;
+        }
+        .fn-dot:hover { transform: scale(1.4); }
+        .fn-dot-input { background: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.3); }
+        .fn-dot-output { background: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.3); }
 
         .modal-card:focus-within {
           outline: 3px solid var(--accent);
@@ -495,6 +519,13 @@ export default function SubDiagram({
           {fnList.map((f, i) => {
             const pos = getFnPos(f.id, i);
             const active = selectedFn === f.id;
+            const fnType = f.fn_type || 'custom';
+            const typeBadge = fnType === 'http' ? '⚡ HTTP' : fnType === 'puppeteer' ? '🎭 Puppeteer' : '';
+            const schema = f.schema || {};
+            const outputs = schema.outputs || [];
+            // Inputs derived from description {{var}} or schema inputs
+            const descInputs = [...(f.description || '').matchAll(/\{\{(\w+)\}\}/g)].map(m => m[1]);
+            const inputs = [...new Set([...(schema.inputs || []).map((i: any) => i.name || i), ...descInputs])];
             return (
               <div
                 key={f.id}
@@ -510,7 +541,26 @@ export default function SubDiagram({
                   className="fn-delete-btn"
                   onClick={(e) => { e.stopPropagation(); deleteFunction(f.id); }}
                 >×</button>
+                {/* Input dots (left side, blue) */}
+                {inputs.map((inp: string, ii: number) => (
+                  <div
+                    key={`in-${ii}`}
+                    className="fn-dot fn-dot-input"
+                    style={{ left: -6, top: 24 + ii * 16 }}
+                    title={`Input: ${inp}`}
+                  />
+                ))}
+                {/* Output dots (right side, green) */}
+                {outputs.map((out: any, oi: number) => (
+                  <div
+                    key={`out-${oi}`}
+                    className="fn-dot fn-dot-output"
+                    style={{ right: -6, top: 24 + oi * 16 }}
+                    title={`Output: ${out.name || '?'} (${out.type || 'string'})${out.extract ? ' ← ' + out.extract : ''}`}
+                  />
+                ))}
                 <div className="fn-card-icon">{f.icon || '⚙️'}</div>
+                {typeBadge && <div style={{ fontSize: 8, color: 'var(--accent)', fontWeight: 600, opacity: 0.8 }}>{typeBadge}</div>}
                 <div className="fn-card-name">{f.name}</div>
                 {f.description && <div className="fn-card-desc">{f.description}</div>}
               </div>
@@ -560,7 +610,7 @@ export default function SubDiagram({
         </div>
       )}
 
-      {/* ─── Edit Function Modal ─── */}
+      {/* ─── Edit Function Modal (Tabbed) ─── */}
       {editingFn && (
         <div className="modal-overlay fade-in mobile-sheet" onClick={() => setEditingFn(null)}>
           <div className="modal-card" onClick={e => e.stopPropagation()} style={{ 
@@ -572,7 +622,28 @@ export default function SubDiagram({
             borderRadius: 12,
             paddingBottom: 16,
           }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)', flexShrink: 0 }}>✏️ Edit Function</h3>
+            {/* Header: name + type */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexShrink: 0 }}>
+              <h3 style={{ margin: 0, fontSize: 16, color: 'var(--text-primary)' }}>✏️ Edit Function</h3>
+              <select
+                value={editFnType}
+                onChange={e => setEditFnType(e.target.value)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg)',
+                  color: 'var(--text-primary)',
+                  fontSize: 13,
+                }}
+              >
+                <option value="custom">📝 Custom</option>
+                <option value="http">⚡ HTTP</option>
+                <option value="puppeteer">🎭 Puppeteer</option>
+              </select>
+            </div>
+
+            {/* Name field */}
             <div style={{ marginBottom: 12, flexShrink: 0 }}>
               <label className="fn-create-label">Name</label>
               <input
@@ -583,32 +654,386 @@ export default function SubDiagram({
                 style={{ width: '100%' }}
               />
             </div>
-            <div style={{ marginBottom: 16, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-              <label className="fn-create-label">Description</label>
-              <textarea
-                value={editFnDesc}
-                onChange={e => setEditFnDesc(e.target.value)}
-                style={{
-                  flex: 1,
-                  width: '100%',
-                  minHeight: 120,
-                  padding: '12px 14px',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'var(--bg)',
-                  color: 'var(--text-primary)',
-                  fontSize: 15,
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  lineHeight: 1.7,
-                }}
-              />
+
+            {/* Tab bar */}
+            <div style={{ display: 'flex', gap: 0, marginBottom: 0, flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+              {(['desc', ...(editFnType !== 'custom' ? ['config' as const] : []), 'outputs'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  style={{
+                    padding: '8px 16px',
+                    border: 'none',
+                    background: 'transparent',
+                    color: activeTab === tab ? 'var(--accent)' : 'var(--text-muted)',
+                    borderBottom: activeTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    fontWeight: activeTab === tab ? 600 : 400,
+                  }}
+                >
+                  {tab === 'desc' ? '📝 Description' : tab === 'config' ? '⚙️ Config' : '📤 Outputs'}
+                </button>
+              ))}
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingBottom: 4 }}>
+
+            {/* Tab content */}
+            <div style={{ flex: 1, overflow: 'auto', minHeight: 0, paddingTop: 12 }}>
+              {/* Description tab */}
+              {activeTab === 'desc' && (
+                <div style={{ display: 'flex', flexDirection: 'column', minHeight: 200 }}>
+                  <label className="fn-create-label">Description (markdown)</label>
+                  <textarea
+                    value={editFnDesc}
+                    onChange={e => setEditFnDesc(e.target.value)}
+                    style={{
+                      flex: 1,
+                      width: '100%',
+                      minHeight: 180,
+                      padding: '12px 14px',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--bg)',
+                      color: 'var(--text-primary)',
+                      fontSize: 15,
+                      resize: 'vertical',
+                      fontFamily: 'inherit',
+                      lineHeight: 1.7,
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Config tab — HTTP */}
+              {activeTab === 'config' && editFnType === 'http' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <label className="fn-create-label">Method</label>
+                    <select
+                      value={editFnSchema.config?.method || 'GET'}
+                      onChange={e => setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, method: e.target.value } }))}
+                      style={{
+                        width: '100%', padding: '8px 12px',
+                        borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+                        background: 'var(--bg)', color: 'var(--text-primary)', fontSize: 14,
+                      }}
+                    >
+                      {['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS'].map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="fn-create-label">URL</label>
+                    <input
+                      value={editFnSchema.config?.url || ''}
+                      onChange={e => setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, url: e.target.value } }))}
+                      placeholder="https://example.com/api"
+                      className="input" style={{ width: '100%' }}
+                    />
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>Use {'{{variable}}'} for dynamic values</div>
+                  </div>
+                  <div>
+                    <label className="fn-create-label">Headers (JSON)</label>
+                    <textarea
+                      value={typeof editFnSchema.config?.headers === 'string' ? editFnSchema.config.headers : JSON.stringify(editFnSchema.config?.headers || {}, null, 2)}
+                      onChange={e => { try { setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, headers: JSON.parse(e.target.value) } })); } catch { setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, headers: e.target.value } })); } }}
+                      placeholder='{"Content-Type": "application/json"}'
+                      rows={3}
+                      style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
+                    />
+                  </div>
+                  <div>
+                    <label className="fn-create-label">Body</label>
+                    <textarea
+                      value={editFnSchema.config?.body || ''}
+                      onChange={e => setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, body: e.target.value } }))}
+                      placeholder='{"username": "{{username}}"}'
+                      rows={4}
+                      style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)', color: 'var(--text-primary)', fontSize: 13, fontFamily: 'monospace', resize: 'vertical' }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Config tab — Puppeteer */}
+              {activeTab === 'config' && editFnType === 'puppeteer' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+                    <input
+                      type="checkbox"
+                      checked={editFnSchema.config?.launch?.headless !== false}
+                      onChange={e => setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, launch: { ...s.config?.launch, headless: e.target.checked } } }))}
+                    />
+                    Headless mode
+                  </label>
+                  <div>
+                    <label className="fn-create-label" style={{ marginBottom: 8, display: 'block' }}>Steps</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {(editFnSchema.config?.steps || []).map((step: any, i: number) => (
+                        <div key={i} style={{
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-md)',
+                          padding: 10,
+                          background: 'var(--bg)',
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, minWidth: 40 }}>Step {i + 1}</span>
+                            <select
+                              value={step.action || 'goto'}
+                              onChange={e => {
+                                const newSteps = [...(editFnSchema.config?.steps || [])];
+                                newSteps[i] = { action: e.target.value };
+                                setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: newSteps } }));
+                              }}
+                              style={{
+                                flex: 1, padding: '4px 8px',
+                                borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+                                background: 'var(--bg)', color: 'var(--text-primary)', fontSize: 12,
+                              }}
+                            >
+                              {['goto','click','type','waitFor','waitForFn','sleep','extract','screenshot'].map(a => (
+                                <option key={a} value={a}>{a}</option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => {
+                                const newSteps = [...(editFnSchema.config?.steps || [])];
+                                newSteps.splice(i, 1);
+                                setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: newSteps } }));
+                              }}
+                              style={{
+                                background: 'rgba(239,68,68,0.15)', color: '#f87171',
+                                border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4,
+                                cursor: 'pointer', fontSize: 11, padding: '2px 8px',
+                              }}
+                            >✕</button>
+                          </div>
+                          {/* Step-specific fields */}
+                          {(step.action === 'goto' || !step.action || step.action === 'goto') && (
+                            <div style={{ marginTop: 4 }}>
+                              <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>URL</label>
+                              <input
+                                value={step.url || ''}
+                                onChange={e => {
+                                  const newSteps = [...(editFnSchema.config?.steps || [])];
+                                  newSteps[i] = { ...newSteps[i], url: e.target.value };
+                                  setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: newSteps } }));
+                                }}
+                                placeholder="https://..."
+                                className="input" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                              />
+                            </div>
+                          )}
+                          {(step.action === 'click' || step.action === 'type' || step.action === 'waitFor') && (
+                            <div>
+                              <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>Selector</label>
+                              <input
+                                value={step.selector || ''}
+                                onChange={e => {
+                                  const newSteps = [...(editFnSchema.config?.steps || [])];
+                                  newSteps[i] = { ...newSteps[i], selector: e.target.value };
+                                  setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: newSteps } }));
+                                }}
+                                placeholder="input[name='username']"
+                                className="input" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                              />
+                            </div>
+                          )}
+                          {step.action === 'type' && (
+                            <div style={{ marginTop: 4 }}>
+                              <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>Value (use {'{{var}}'} for templates)</label>
+                              <input
+                                value={step.value || ''}
+                                onChange={e => {
+                                  const next = [...(editFnSchema.config?.steps || [])];
+                                  next[i] = { ...next[i], value: e.target.value };
+                                  setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: next } }));
+                                }}
+                                placeholder="{{password}}"
+                                className="input" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                              />
+                            </div>
+                          )}
+                          {step.action === 'waitForFn' && (
+                            <div style={{ marginTop: 4 }}>
+                              <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>JS Function</label>
+                              <textarea
+                                value={step.fn || ''}
+                                onChange={e => {
+                                  const next = [...(editFnSchema.config?.steps || [])];
+                                  next[i] = { ...next[i], fn: e.target.value };
+                                  setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: next } }));
+                                }}
+                                placeholder="() => document.readyState === 'complete'"
+                                rows={2}
+                                style={{ width: '100%', fontSize: 11, fontFamily: 'monospace', padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--bg)', color: 'var(--text-primary)', resize: 'vertical' }}
+                              />
+                            </div>
+                          )}
+                          {step.action === 'sleep' && (
+                            <div style={{ marginTop: 4 }}>
+                              <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>Milliseconds</label>
+                              <input
+                                type="number"
+                                value={step.ms || 1000}
+                                onChange={e => {
+                                  const next = [...(editFnSchema.config?.steps || [])];
+                                  next[i] = { ...next[i], ms: parseInt(e.target.value) || 0 };
+                                  setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: next } }));
+                                }}
+                                className="input" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                              />
+                            </div>
+                          )}
+                          {(step.action === 'extract' || step.action === 'screenshot') && (
+                            <div style={{ marginTop: 4, display: 'flex', gap: 8 }}>
+                              {step.action === 'extract' && (
+                                <>
+                                  <div style={{ flex: 1 }}>
+                                    <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>Name</label>
+                                    <input
+                                      value={step.name || ''}
+                                      onChange={e => {
+                                        const next = [...(editFnSchema.config?.steps || [])];
+                                        next[i] = { ...next[i], name: e.target.value };
+                                        setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: next } }));
+                                      }}
+                                      placeholder="cookie"
+                                      className="input" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                                    />
+                                  </div>
+                                  <div style={{ flex: 1 }}>
+                                    <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>From</label>
+                                    <select
+                                      value={step.from || 'cookies'}
+                                      onChange={e => {
+                                        const next = [...(editFnSchema.config?.steps || [])];
+                                        next[i] = { ...next[i], from: e.target.value };
+                                        setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: next } }));
+                                      }}
+                                      style={{ width: '100%', fontSize: 12, padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-primary)' }}
+                                    >
+                                      <option value="cookies">cookies</option>
+                                      <option value="url">url</option>
+                                      <option value="title">title</option>
+                                      <option value="text:selector">text:selector</option>
+                                      <option value="html:selector">html:selector</option>
+                                    </select>
+                                  </div>
+                                </>
+                              )}
+                              {step.action === 'screenshot' && (
+                                <div style={{ flex: 1 }}>
+                                  <label style={{ fontSize: 10, color: 'var(--text-muted)' }}>Name</label>
+                                  <input
+                                    value={step.name || ''}
+                                    onChange={e => {
+                                      const next = [...(editFnSchema.config?.steps || [])];
+                                      next[i] = { ...next[i], name: e.target.value };
+                                      setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: next } }));
+                                    }}
+                                    placeholder="screenshot1"
+                                    className="input" style={{ width: '100%', fontSize: 12, padding: '4px 8px' }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => {
+                          const steps = editFnSchema.config?.steps || [];
+                          setEditFnSchema((s: any) => ({ ...s, config: { ...s.config, steps: [...steps, { action: 'goto' }] } }));
+                        }}
+                        style={{
+                          padding: '8px 16px',
+                          border: '1px dashed var(--accent)',
+                          borderRadius: 'var(--radius-md)',
+                          background: 'transparent',
+                          color: 'var(--accent)',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                          width: '100%',
+                        }}
+                      >+ Add Step</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Outputs tab */}
+              {activeTab === 'outputs' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label className="fn-create-label" style={{ marginBottom: 4 }}>Output Variables</label>
+                  {(editFnSchema.outputs || []).map((out: any, i: number) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        value={out.name || ''}
+                        onChange={e => {
+                          const next = [...(editFnSchema.outputs || [])];
+                          next[i] = { ...next[i], name: e.target.value };
+                          setEditFnSchema((s: any) => ({ ...s, schema: s.schema, config: s.config, outputs: next }));
+                        }}
+                        placeholder="var name"
+                        className="input" style={{ flex: 2, minWidth: 100, fontSize: 12, padding: '6px 8px' }}
+                      />
+                      <select
+                        value={out.type || 'string'}
+                        onChange={e => {
+                          const next = [...(editFnSchema.outputs || [])];
+                          next[i] = { ...next[i], type: e.target.value };
+                          setEditFnSchema((s: any) => ({ ...s, config: s.config, outputs: next }));
+                        }}
+                        style={{ flex: 1, minWidth: 80, fontSize: 12, padding: '6px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text-primary)' }}
+                      >
+                        {['string','number','boolean','json','array'].map(t => (
+                          <option key={t} value={t}>{t}</option>
+                        ))}
+                      </select>
+                      <input
+                        value={out.extract || ''}
+                        onChange={e => {
+                          const next = [...(editFnSchema.outputs || [])];
+                          next[i] = { ...next[i], extract: e.target.value };
+                          setEditFnSchema((s: any) => ({ ...s, config: s.config, outputs: next }));
+                        }}
+                        placeholder="lodash path"
+                        className="input" style={{ flex: 2, minWidth: 100, fontSize: 12, padding: '6px 8px' }}
+                      />
+                      <button
+                        onClick={() => {
+                          const next = [...(editFnSchema.outputs || [])];
+                          next.splice(i, 1);
+                          setEditFnSchema((s: any) => ({ ...s, config: s.config, outputs: next }));
+                        }}
+                        style={{
+                          background: 'rgba(239,68,68,0.15)', color: '#f87171',
+                          border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4,
+                          cursor: 'pointer', fontSize: 14, padding: '4px 8px',
+                        }}
+                      >✕</button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => setEditFnSchema((s: any) => ({ ...s, config: s.config, outputs: [...(s.outputs || []), { name: '', type: 'string', extract: '' }] }))}
+                    style={{
+                      padding: '8px 16px', border: '1px dashed var(--accent)',
+                      borderRadius: 'var(--radius-md)', background: 'transparent',
+                      color: 'var(--accent)', cursor: 'pointer', fontSize: 13,
+                    }}
+                  >+ Add Output</button>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingTop: 12, borderTop: '1px solid var(--border)', marginTop: 12 }}>
               <button onClick={() => setEditingFn(null)} className="btn btn-ghost btn-sm">Cancel</button>
               <button onClick={saveEditFn} disabled={!editFnName.trim()} className="btn btn-primary btn-sm">Save</button>
             </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 16, flexShrink: 0 }}>
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8, flexShrink: 0 }}>
               <button
                 onClick={() => { deleteFunction(editingFn); setEditingFn(null); }}
                 className="btn btn-sm"

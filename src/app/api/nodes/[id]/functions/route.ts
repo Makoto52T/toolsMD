@@ -9,7 +9,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: nodeId } = await params;
-  const { name, description } = await req.json();
+  const { name, description, fn_type, schema } = await req.json();
   if (!name?.trim()) return NextResponse.json({ error: 'Name required' }, { status: 400 });
 
   // Exact duplicate check (case-insensitive) — only exact match
@@ -26,14 +26,16 @@ export async function POST(
   const sort = ((mx as any[])[0]?.mx || 0) + 1;
   const id = uid();
   await pool.query(
-    'INSERT INTO functions (id, node_id, name, description, sort_order) VALUES (?, ?, ?, ?, ?)',
-    [id, nodeId, name.trim(), description || null, sort]
+    'INSERT INTO functions (id, node_id, name, description, fn_type, `schema`, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, nodeId, name.trim(), description || null, fn_type || 'custom', schema ? JSON.stringify(schema) : null, sort]
   );
   return NextResponse.json({
     id,
     node_id: nodeId,
     name: name.trim(),
     description: description || null,
+    fn_type: fn_type || 'custom',
+    schema: schema || null,
     icon: '⚙️',
     category: 'Core',
     sort_order: sort,

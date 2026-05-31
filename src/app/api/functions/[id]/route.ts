@@ -12,6 +12,8 @@ export async function PATCH(
   const vals: any[] = [];
   if (body.name !== undefined) { sets.push('name = ?'); vals.push(body.name); }
   if (body.description !== undefined) { sets.push('description = ?'); vals.push(body.description); }
+  if (body.fn_type !== undefined) { sets.push('fn_type = ?'); vals.push(body.fn_type); }
+  if (body.schema !== undefined) { sets.push('`schema` = ?'); vals.push(JSON.stringify(body.schema)); }
   if (sets.length === 0) return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
   vals.push(id);
   await pool.query(`UPDATE functions SET ${sets.join(', ')} WHERE id = ?`, vals);
