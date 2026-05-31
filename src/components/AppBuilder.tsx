@@ -119,7 +119,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     setNewNodeDesc('');
     setNewNodeNotes('');
     setCreateModal(true);
-    setMenuOpen(false);
   };
 
   const confirmCreateNode = async () => {
@@ -532,6 +531,8 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
             </div>
           )}
         </div>
+
+      </div>
 
       {/* Mobile toolbar — sticky below topbar */}
       <div className="mobile-toolbar">
