@@ -9,7 +9,7 @@ import SubDiagram from './SubDiagram';
 
 interface Project { id: string; name: string; }
 interface NodeItem { id: string; name: string; description?: string; notes?: string; x: number; y: number; w: number; h: number; fnCount: number; }
-interface FunctionItem { id: string; node_id: string; name: string; description?: string; icon: string; category: string; sort_order: number; }
+interface FunctionItem { id: string; node_id: string; name: string; description?: string; fn_type?: string; schema?: any; icon: string; category: string; sort_order: number; }
 interface EdgeItem { id: string; from_node_id: string; to_node_id: string; from_function_id: string | null; to_function_id: string | null; label: string; }
 
 export default function AppBuilder({ session, projectId: initialProjectId, projectName: initialProjectName }: { session: Session; projectId: string; projectName: string }) {
