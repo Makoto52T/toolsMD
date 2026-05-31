@@ -30,7 +30,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   const [editNodeNotes, setEditNodeNotes] = useState('');
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -336,7 +335,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         .topbar-actions { display: flex; gap: 6px; margin-left: auto; }
         .topbar-actions.desktop { display: flex; }
         .topbar-actions.mobile { display: none; }
-        .hamburger { display: none; background: none; border: none; color: var(--text-secondary); font-size: 20px; cursor: pointer; padding: 4px 8px; }
 
         /* Project Switcher */
         .project-switcher { position: relative; margin-right: 8px; flex-shrink: 0; }
@@ -410,9 +408,24 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         .textarea-desc-tall:focus { outline: none; border-color: var(--accent); }
         .fn-create-actions { display: flex; gap: 8px; }
 
-        /* Mobile menu */
-        .mobile-menu { position: fixed; top: 48px; right: 8px; background: var(--surface-elevated); border: 1px solid var(--border-hover); border-radius: var(--radius-md); padding: 4px; z-index: 200; box-shadow: 0 8px 32px rgba(0,0,0,0.4); display: flex; flex-direction: column; gap: 2px; min-width: 160px; }
-        .mobile-menu button { justify-content: flex-start; width: 100%; }
+        /* Mobile toolbar — sticky below topbar */
+        .mobile-toolbar { display: none; }
+        @media (max-width: 768px) {
+          .mobile-toolbar {
+            display: flex;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+            padding: 6px 10px;
+            gap: 6px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+          .mobile-toolbar button { flex-shrink: 0; white-space: nowrap; }
+          .topbar { position: sticky; top: 0; z-index: 101; }
+        }
 
         /* Mobile sidebar overlay */
         .sidebar-overlay { position: fixed; inset: 0; z-index: 150; display: flex; }
@@ -430,7 +443,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         @media (max-width: 768px) {
           .topbar-actions.desktop { display: none; }
           .topbar-actions.mobile { display: flex; }
-          .hamburger { display: block; }
           .sidebar { display: none; }
           .node-card { padding: 8px 10px; min-height: 50px; }
           .node-name { font-size: 12px; margin-bottom: 4px; }
@@ -521,23 +533,15 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
           )}
         </div>
 
-        {/* Mobile hamburger */}
-        <button className="hamburger" onClick={() => setMenuOpen(!menuOpen)}>☰</button>
+      {/* Mobile toolbar — sticky below topbar */}
+      <div className="mobile-toolbar">
+        <button onClick={openCreateModal} className="btn btn-ghost btn-sm">+ Node</button>
+        <button onClick={() => setConnectMode(!connectMode)} className={connectMode ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
+          {connectMode ? 'Selecting...' : '🔗'}
+        </button>
+        <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
+        <button onClick={() => setSidebarOpen(true)} className="btn btn-ghost btn-sm">📦 {nodes.length}</button>
       </div>
-
-      {/* Mobile menu dropdown */}
-      {menuOpen && (
-        <div className="mobile-menu fade-in" onClick={() => setMenuOpen(false)}>
-          <button onClick={openCreateModal} className="btn btn-ghost btn-sm">+ Node</button>
-          <button onClick={() => { setConnectMode(!connectMode); setMenuOpen(false); }} className={connectMode ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}>
-            {connectMode ? 'Selecting...' : '🔗 Connect'}
-          </button>
-          <button onClick={exportPlan} className="btn btn-primary btn-sm">📋 Export</button>
-          <div style={{ borderTop: '1px solid var(--border)', margin: '2px 0' }} />
-          <button onClick={() => { setSidebarOpen(true); setMenuOpen(false); }} className="btn btn-ghost btn-sm">📦 Nodes ({nodes.length})</button>
-          <button onClick={() => signOut()} className="btn btn-ghost btn-sm" style={{ color: '#f87171' }}>🚪 Logout</button>
-        </div>
-      )}
 
       {/* Mobile sidebar drawer */}
       {sidebarOpen && (
