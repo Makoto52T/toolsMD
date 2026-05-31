@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getProjects } from '@/lib/projects';
 import Link from 'next/link';
 import CreateProjectButton from '@/components/CreateProjectButton';
+import DeleteProjectButton from '@/components/DeleteProjectButton';
 
 export default async function HomePage() {
   const session = await getAuthSession();
@@ -25,10 +26,14 @@ export default async function HomePage() {
         .project-list-header h1 { font-size: 22px; font-weight: 700; color: #e6edf3; margin: 0; display: flex; align-items: center; gap: 8px; }
         .project-list-header .user-email { font-size: 13px; color: #484f58; margin-left: 8px; }
         .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-        .project-card { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-radius: 10px;
+        .project-card { position: relative; display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-radius: 10px;
           background: #0d1117; border: 1px solid #1c2333; text-decoration: none; color: #c9d1d9; font-size: 14px;
           font-weight: 500; transition: border-color 0.15s, box-shadow 0.15s; }
         .project-card:hover { border-color: #4493f8; box-shadow: 0 0 0 2px rgba(68,147,248,0.12); }
+        .project-card .delete-btn { position: absolute; top: 6px; right: 6px; background: transparent; border: none;
+          cursor: pointer; font-size: 14px; opacity: 0; transition: opacity 0.15s; padding: 2px 4px; border-radius: 4px; line-height: 1; }
+        .project-card:hover .delete-btn { opacity: 1; }
+        .project-card .delete-btn:hover { background: rgba(239,68,68,0.15); }
         .project-card .card-icon { font-size: 20px; flex-shrink: 0; }
         .project-card .card-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .project-card .card-date { font-size: 11px; color: #484f58; margin-top: 2px; }
@@ -68,6 +73,7 @@ export default async function HomePage() {
                       : ''}
                   </div>
                 </div>
+                <DeleteProjectButton projectId={p.id} projectName={p.name} />
               </Link>
             ))}
           </div>

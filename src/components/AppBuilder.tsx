@@ -139,6 +139,17 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     } catch {}
   };
 
+  const deleteProject = async () => {
+    if (!confirm(`Delete project "${projectName}"?\n\nThis will permanently delete all nodes, functions, and edges.`)) return;
+    try {
+      await api('DELETE', `/projects/${projectId}`);
+      router.push('/');
+    } catch (err: any) {
+      setToast(err?.message || err?.error || 'Delete failed');
+      setTimeout(() => setToast(''), 2000);
+    }
+  };
+
   const switchProject = (id: string) => {
     router.push('/project/' + id);
   };
@@ -823,6 +834,13 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               )}
               <button className="project-switcher-item project-switcher-new" onClick={() => { setProjectSwitcherOpen(false); createProject(); }}>
                 <span>➕</span> New Project
+              </button>
+              <button
+                className="project-switcher-item"
+                style={{ color: '#f87171' }}
+                onClick={() => { setProjectSwitcherOpen(false); deleteProject(); }}
+              >
+                <span>🗑️</span> Delete Project
               </button>
             </div>
           )}
