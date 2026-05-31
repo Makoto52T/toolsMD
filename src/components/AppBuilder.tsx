@@ -1081,8 +1081,8 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
             {edges.map(e => {
               const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
               if (!fn || !tn) return null;
-              const midX = (fn.x + (fn.w || 180) + tn.x) / 2;
-              const midY = (fn.y + 30 + tn.y + 30) / 2;
+              const midX = (((fn as any).nodeX ?? fn.x) + (fn.w || 180) + ((tn as any).nodeX ?? tn.x)) / 2;
+              const midY = (((fn as any).nodeY ?? fn.y) + 30 + ((tn as any).nodeY ?? tn.y) + 30) / 2;
               if (!e.from_function_id && !e.to_function_id) return null; // node-level, skip
               return (
                 <text

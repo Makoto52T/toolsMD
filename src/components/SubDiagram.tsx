@@ -72,6 +72,7 @@ export default function SubDiagram({
 
   // Drag state
   const dragRef = useRef<{ fnId: string; startX: number; startY: number; fnX: number; fnY: number } | null>(null);
+  const fnElRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Long-press for connect
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -285,7 +286,11 @@ export default function SubDiagram({
     }
     const newX = Math.max(0, dragRef.current.fnX + dx);
     const newY = Math.max(0, dragRef.current.fnY + dy);
-    setFnPositions(prev => ({ ...prev, [fnId]: { x: newX, y: newY } }));
+    // Use CSS transform for smooth dragging (no re-render)
+    const el = fnElRefs.current.get(fnId);
+    if (el) {
+      el.style.transform = `translate(${newX - dragRef.current.fnX}px, ${newY - dragRef.current.fnY}px)`;
+    }
   };
 
   const handleFnPointerUp = (e: React.PointerEvent, fnId: string) => {
@@ -295,6 +300,10 @@ export default function SubDiagram({
     const dy = e.clientY - dragRef.current.startY;
     const newX = Math.max(0, dragRef.current.fnX + dx);
     const newY = Math.max(0, dragRef.current.fnY + dy);
+    // Reset CSS transform
+    const el = fnElRefs.current.get(fnId);
+    if (el) el.style.transform = '';
+    // Update React state (triggers edge re-render with correct position)
     setFnPositions(prev => ({ ...prev, [fnId]: { x: newX, y: newY } }));
     dragRef.current = null;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
@@ -627,6 +636,7 @@ export default function SubDiagram({
             return (
               <div
                 key={f.id}
+                ref={(el: HTMLDivElement | null) => { if (el) fnElRefs.current.set(f.id, el); else fnElRefs.current.delete(f.id); }}
                 className={`fn-card${active ? ' active' : ''}${longPressFn === f.id ? ' long-press-pulse' : ''}`}
                 style={{ left: pos.x, top: pos.y }}
                 onClick={(e) => { e.stopPropagation(); setSelectedFn(f.id); }}
@@ -743,6 +753,8 @@ export default function SubDiagram({
       {editingFn && (
         <div className="modal-overlay fade-in mobile-sheet" onClick={() => setEditingFn(null)}>
           <div className="modal-card" onClick={e => e.stopPropagation()} style={{ 
+            position: 'relative',
+            zIndex: 101,
             width: '95vw',
             maxWidth: 800, 
             maxHeight: '90vh',
