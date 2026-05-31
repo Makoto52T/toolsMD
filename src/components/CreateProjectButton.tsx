@@ -34,7 +34,6 @@ export default function CreateProjectButton() {
         boxShadow: '0 0 0 2px rgba(68,147,248,0.12)',
       }}>
         <input
-          autoFocus
           value={name}
           onChange={e => setName(e.target.value)}
           onKeyDown={e => {

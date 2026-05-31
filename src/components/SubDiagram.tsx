@@ -540,7 +540,6 @@ export default function SubDiagram({
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addFunction(); } }}
                 placeholder="e.g., userLogin"
                 className="input"
-                autoFocus
                 style={{ width: '100%' }}
               />
             </div>
@@ -581,7 +580,6 @@ export default function SubDiagram({
                 onChange={e => setEditFnName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEditFn(); } }}
                 className="input"
-                autoFocus
                 style={{ width: '100%' }}
               />
             </div>
