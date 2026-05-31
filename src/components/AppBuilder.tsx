@@ -63,7 +63,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   const loadData = useCallback(async () => {
     if (!projectId) return;
-    const d = await api('GET', `/projects/${projectId}/full`);
+    const d = await api('GET', `/projects/${projectId}`);
     setProjectName(d.project.name);
     setNodes(d.nodes.map((n: any) => ({ ...n, fnCount: 0 })));
     setFunctions(d.functions);
