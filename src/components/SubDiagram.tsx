@@ -567,11 +567,11 @@ export default function SubDiagram({
           <div className="modal-card" onClick={e => e.stopPropagation()} style={{ 
             width: '95vw',
             maxWidth: 800, 
-            height: '90vh',
+            maxHeight: '90vh',
             display: 'flex',
             flexDirection: 'column',
             borderRadius: 12,
-            overflowY: 'auto',
+            paddingBottom: 12,
           }}>
             <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)', flexShrink: 0 }}>✏️ Edit Function</h3>
             <div style={{ marginBottom: 12, flexShrink: 0 }}>
@@ -585,7 +585,7 @@ export default function SubDiagram({
                 style={{ width: '100%' }}
               />
             </div>
-            <div style={{ marginBottom: 16, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <div style={{ marginBottom: 16, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
               <label className="fn-create-label">Description</label>
               <textarea
                 value={editFnDesc}
@@ -593,7 +593,7 @@ export default function SubDiagram({
                 style={{
                   flex: 1,
                   width: '100%',
-                  minHeight: 300,
+                  minHeight: 120,
                   padding: '12px 14px',
                   border: '1px solid var(--border)',
                   borderRadius: 'var(--radius-sm)',
