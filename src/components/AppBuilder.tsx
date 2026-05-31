@@ -254,6 +254,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   };
 
   const deleteFunction = async (fnId: string) => {
+    if (!confirm('Delete this function? All connected edges will also be removed.')) return;
     await api('DELETE', `/functions/${fnId}`);
     setFunctions(prev => prev.filter(f => f.id !== fnId));
     setEdges(prev => prev.filter(e => e.from_function_id !== fnId && e.to_function_id !== fnId));
