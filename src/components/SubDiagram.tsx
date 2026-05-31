@@ -335,10 +335,11 @@ export default function SubDiagram({
           color: var(--text-muted);
           text-align: center;
           word-break: break-word;
-          max-width: 100px;
+          line-height: 1.4;
+          white-space: pre-wrap;
+          max-width: 110px;
+          max-height: 32px;
           overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
         }
         .fn-delete-btn {
           position: absolute;
@@ -557,9 +558,15 @@ export default function SubDiagram({
       {/* ─── Edit Function Modal ─── */}
       {editingFn && (
         <div className="modal-overlay fade-in mobile-sheet" onClick={() => setEditingFn(null)}>
-          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 500 }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)' }}>✏️ Edit Function</h3>
-            <div style={{ marginBottom: 12 }}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ 
+            maxWidth: 700, 
+            width: '100%', 
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+          }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)', flexShrink: 0 }}>✏️ Edit Function</h3>
+            <div style={{ marginBottom: 12, flexShrink: 0 }}>
               <label className="fn-create-label">Name</label>
               <input
                 value={editFnName}
@@ -570,19 +577,32 @@ export default function SubDiagram({
                 style={{ width: '100%' }}
               />
             </div>
-            <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 16, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
               <label className="fn-create-label">Description</label>
               <textarea
                 value={editFnDesc}
                 onChange={e => setEditFnDesc(e.target.value)}
-                className="textarea-desc"
+                style={{
+                  flex: 1,
+                  width: '100%',
+                  minHeight: 200,
+                  padding: '10px 12px',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg)',
+                  color: 'var(--text-primary)',
+                  fontSize: 14,
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  lineHeight: 1.6,
+                }}
               />
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0 }}>
               <button onClick={() => setEditingFn(null)} className="btn btn-ghost btn-sm">Cancel</button>
               <button onClick={saveEditFn} disabled={!editFnName.trim()} className="btn btn-primary btn-sm">Save</button>
             </div>
-            <div style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 }}>
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12, flexShrink: 0 }}>
               <button
                 onClick={() => { deleteFunction(editingFn); setEditingFn(null); }}
                 className="btn btn-sm"
