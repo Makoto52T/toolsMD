@@ -53,8 +53,8 @@ export default function CreateProjectButton() {
             disabled={loading || !name.trim()}
             style={{
               flex: 1, padding: '7px 0', borderRadius: 6, border: 'none',
-              background: loading || !name.trim() ? '#1c2636' : '#4493f8',
-              color: loading || !name.trim() ? '#484f58' : '#fff',
+              background: loading || !name.trim() ? 'var(--surface-elevated)' : 'var(--accent)',
+              color: loading || !name.trim() ? 'var(--text-muted)' : '#fff',
               cursor: loading || !name.trim() ? 'default' : 'pointer',
               fontSize: 13, fontWeight: 500,
             }}
