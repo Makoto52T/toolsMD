@@ -26,12 +26,25 @@ export async function PATCH(
   return NextResponse.json({ success: true });
 }
 
-// DELETE /api/nodes/[id]
+// DELETE /api/nodes/[id] — cascade delete
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  await pool.query('DELETE FROM nodes WHERE id = ?', [id]);
-  return NextResponse.json({ success: true });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM edges WHERE from_node_id = ? OR to_node_id = ?', [id, id]);
+    await conn.query('DELETE FROM functions WHERE node_id = ?', [id]);
+    await conn.query('DELETE FROM nodes WHERE id = ?', [id]);
+    await conn.commit();
+    conn.release();
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    await conn.rollback();
+    conn.release();
+    console.error('Delete node failed:', err);
+    return NextResponse.json({ error: 'Delete failed' }, { status: 500 });
+  }
 }

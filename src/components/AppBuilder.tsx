@@ -64,6 +64,10 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   // Drag state
   const dragRef = useRef<{ nodeId: string; startX: number; startY: number; nodeX: number; nodeY: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Zoom
+  const [zoom, setZoom] = useState(1);
 
   const api = async (method: string, path: string, body?: any) => {
     const res = await fetch('/api' + path, {
@@ -100,6 +104,28 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (deleteEdgeTarget) { deleteEdge(deleteEdgeTarget.id); return; }
+        if (selectedNode) { deleteNode(selectedNode); return; }
+      }
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setDeleteEdgeTarget(null);
+        setEdgeWizard(null);
+        setEditingNode(null);
+        setCreateModal(false);
+        setCheckModal(null);
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [selectedNode, deleteEdgeTarget]);
+
   // Auto-close edge wizard if open > 60s (safety timeout)
   useEffect(() => {
     if (!edgeWizard) return;
@@ -115,7 +141,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     try {
       const data = await api('GET', '/projects');
       setProjects(Array.isArray(data) ? data : []);
-    } catch { /* silently ignore */ }
+    } catch (err) { console.error('loadProjects failed:', err); }
   }, []);
   useEffect(() => { loadProjects(); }, [loadProjects]);
 
@@ -136,7 +162,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     try {
       const p = await api('POST', '/projects', { name });
       router.push('/project/' + p.id);
-    } catch {}
+    } catch (err) { console.error('createProject failed:', err); }
   };
 
   const deleteProject = async () => {
@@ -179,7 +205,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   const updateNodePosition = async (nodeId: string, x: number, y: number) => {
     setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, x, y } : n));
-    try { await api('PATCH', `/nodes/${nodeId}`, { x, y }); } catch {}
+    try { await api('PATCH', `/nodes/${nodeId}`, { x, y }); } catch (err) { console.error('updateNodePosition failed:', err); }
   };
 
   const updateNode = async (nodeId: string, fields: { name?: string; description?: string; notes?: string }) => {
@@ -187,7 +213,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       if (n.id !== nodeId) return n;
       return { ...n, ...fields };
     }));
-    try { await api('PATCH', `/nodes/${nodeId}`, fields); } catch {}
+    try { await api('PATCH', `/nodes/${nodeId}`, fields); } catch (err) { console.error('updateNode failed:', err); }
   };
 
   // Add function immediately — no duplicate check
@@ -386,7 +412,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       if (fns.length) {
         fns.forEach(f => {
           const outEdges = edges.filter(e => e.from_function_id === f.id);
-          md += `- ${f.icon}${f.name}${outEdges.length ? ` (${outEdges.length} edge${outEdges.length > 1 ? 's' : ''})` : ''}\n`;
+          md += `- ${f.icon || '⚙️'} ${f.name}${outEdges.length ? ` (${outEdges.length} edge${outEdges.length > 1 ? 's' : ''})` : ''}\n`;
           outEdges.forEach(e => {
             const tgtNode = nodes.find(tn => tn.id === e.to_node_id);
             const tgtFn = functions.find(tf => tf.id === e.to_function_id);
@@ -447,6 +473,14 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     updateNodePosition(node.id, newX, newY);
     dragRef.current = null;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  };
+
+  // Wheel zoom
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      setZoom(prev => Math.min(2, Math.max(0.25, prev - e.deltaY * 0.001)));
+    }
   };
 
   // Close context menu on outside click / Escape
@@ -572,10 +606,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   return (
     <div className="app-layout">
       <style>{`
-        .app-layout { background: var(--bg); height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
-        
-        /* Topbar */
-        .topbar { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); align-items: center; height: 48px; flex-shrink: 0; }
+        /* ─── Topbar (shared base in globals.css) ─── */
         .topbar-logo { font-size: 16px; font-weight: 700; color: var(--text-primary); margin-right: 4px; display: flex; align-items: center; gap: 4px; }
         .topbar-name { font-size: 14px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
         .topbar-actions { display: flex; gap: 6px; margin-left: auto; }
@@ -617,9 +648,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         .sidebar-item .count { margin-left: auto; font-size: 10px; color: var(--text-muted); }
         .sidebar-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px; }
 
-        /* Canvas */
-        .canvas { flex: 1; position: relative; overflow: auto; -webkit-overflow-scrolling: touch; }
-        .canvas-grid { position: absolute; inset: 0; min-width: 2000px; min-height: 2000px; opacity: 0.025; background-image: radial-gradient(circle, var(--text-muted) 1px, transparent 1px); background-size: 24px 24px; pointer-events: none; }
+        /* Canvas grid — shared in globals */
         
         /* Node card */
         .node-card { position: absolute; min-height: 60px; background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--radius-lg); padding: 10px 12px; cursor: grab; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); touch-action: none; user-select: none; -webkit-user-select: none; }
@@ -632,45 +661,20 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         .node-meta-desc { font-size: 10px; color: var(--text-muted); margin-bottom: 2px; line-height: 1.4; }
         .node-meta-notes { font-size: 10px; color: var(--accent); opacity: 0.7; line-height: 1.4; }
 
-        /* Modal overlay */
-        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
-        .modal-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; max-height: 70vh; overflow-y: auto; width: 100%; }
+        /* Modal overlay — shared in globals */
 
         /* Form elements */
         .fn-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg); border-radius: var(--radius-sm); margin-bottom: 4px; font-size: 13px; color: var(--text-secondary); }
         .fn-desc { font-size: 11px; color: var(--text-muted); margin-left: 24px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
-        .textarea-desc { width: 100%; min-height: 60px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; }
-        .textarea-desc:focus { outline: none; border-color: var(--accent); }
 
         /* Node name input in modal */
         .node-name-input { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-primary); font-family: inherit; }
         .node-name-input:focus { outline: none; border-color: var(--accent); }
 
         /* Trello-like function creation card */
-        .fn-create-card { margin-top: 16px; padding: 12px; background: var(--bg); border: 1px solid var(--border-hover); border-radius: var(--radius-md); }
-        .fn-create-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
         .textarea-desc-tall { width: 100%; min-height: 80px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; margin-bottom: 10px; }
         .textarea-desc-tall:focus { outline: none; border-color: var(--accent); }
         .fn-create-actions { display: flex; gap: 8px; }
-
-        /* Mobile toolbar — sticky below topbar */
-        .mobile-toolbar { display: none; }
-        @media (max-width: 768px) {
-          .mobile-toolbar {
-            display: flex;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            background: var(--bg);
-            border-bottom: 1px solid var(--border);
-            padding: 6px 10px;
-            gap: 6px;
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-          }
-          .mobile-toolbar button { flex-shrink: 0; white-space: nowrap; }
-          .topbar { position: sticky; top: 0; z-index: 101; }
-        }
 
         /* Mobile sidebar overlay */
         .sidebar-overlay { position: fixed; inset: 0; z-index: 150; display: flex; }
@@ -819,15 +823,31 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
           {projectSwitcherOpen && (
             <div className="project-switcher-dropdown fade-in">
               {projects.map(p => (
-                <button
+                <div
                   key={p.id}
                   className={`project-switcher-item${p.id === projectId ? ' active' : ''}`}
-                  onClick={() => p.id !== projectId && switchProject(p.id)}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                 >
-                  <span>📁</span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                  {p.id === projectId && <span className="check">✓</span>}
-                </button>
+                  <div
+                    onClick={() => p.id !== projectId && switchProject(p.id)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, cursor: 'pointer' }}
+                  >
+                    <span>📁</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                    {p.id === projectId && <span className="check">✓</span>}
+                  </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (confirm(`Delete project "${p.name}"?`)) {
+                        api('DELETE', `/projects/${p.id}`).then(() => loadProjects());
+                      }
+                    }}
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: '2px 6px', fontSize: 11 }}
+                    title="Delete project"
+                  >🗑️</button>
+                </div>
               ))}
               {!projects.length && (
                 <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No projects yet</div>
@@ -902,7 +922,10 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               const fns = nodeFns(n.id);
               const active = selectedNode === n.id;
               return (
-                <div key={n.id} className={`sidebar-item${active ? ' active' : ''}`} onClick={() => { setSelectedNode(n.id); setSidebarOpen(false); }}>
+                <div key={n.id} className={`sidebar-item${active ? ' active' : ''}`} onClick={() => { 
+                  setSelectedNode(n.id); setSidebarOpen(false); 
+                  if (canvasRef.current) canvasRef.current.scrollTo({ left: Math.max(0, n.x - 100), top: Math.max(0, n.y - 100), behavior: 'smooth' });
+                }}>
                   <span style={{ opacity: 0.5 }}>📦</span> {n.name}
                   <span className="count">{fns.length}</span>
                 </div>
@@ -921,7 +944,10 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
             const fns = nodeFns(n.id);
             const active = selectedNode === n.id;
             return (
-              <div key={n.id} className={`sidebar-item${active ? ' active' : ''}`} onClick={() => setSelectedNode(n.id)}>
+              <div key={n.id} className={`sidebar-item${active ? ' active' : ''}`} onClick={() => { 
+                setSelectedNode(n.id);
+                if (canvasRef.current) canvasRef.current.scrollTo({ left: Math.max(0, n.x - 100), top: Math.max(0, n.y - 100), behavior: 'smooth' });
+              }}>
                 <span style={{ opacity: 0.5 }}>📦</span> {n.name}
                 <span className="count">{fns.length}</span>
               </div>
@@ -933,9 +959,21 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         {/* Canvas */}
         <div
           className="canvas"
+          ref={canvasRef}
+          onWheel={handleWheel}
           onClick={() => { setSelectedNode(null); if (contextMenu) setContextMenu(null); }}
         >
+          <div style={{ transform: `scale(${zoom})`, transformOrigin: '0 0', minWidth: 2000, minHeight: 2000 }}>
           <div className="canvas-grid" />
+
+          {/* Empty state */}
+          {!nodes.length && (
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', textAlign: 'center', color: 'var(--text-muted)', pointerEvents: 'none' }}>
+              <div style={{ fontSize: 48, marginBottom: 8 }}>📦</div>
+              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>No nodes yet</div>
+              <div style={{ fontSize: 13 }}>Click "+ Node" to add your first node</div>
+            </div>
+          )}
 
           {/* Edges + drag-line SVG */}
           <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', minWidth: 2000, minHeight: 2000 }}>
@@ -1016,10 +1054,33 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                 />
               );
             })}
+            {/* Edge labels on SVG */}
+            {edges.map(e => {
+              const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
+              if (!fn || !tn) return null;
+              const midX = (fn.x + (fn.w || 180) + tn.x) / 2;
+              const midY = (fn.y + 30 + tn.y + 30) / 2;
+              if (!e.from_function_id && !e.to_function_id) return null; // node-level, skip
+              return (
+                <text
+                  key={`label-${e.id}`}
+                  x={midX} y={midY - 5}
+                  textAnchor="middle"
+                  fill="var(--accent)"
+                  fontSize={9}
+                  fontFamily="inherit"
+                  style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+                  onClick={(ev) => { ev.stopPropagation(); setDeleteEdgeTarget(e); }}
+                >
+                  {e.label || '→'}
+                </text>
+              );
+            })}
           </svg>
 
           {/* Nodes */}
           {nodes.map(n => <NodeCard key={n.id} n={n} />)}
+          </div>
         </div>
       </div>
 
@@ -1406,6 +1467,13 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
           </div>
         </div>
       )}
+
+      {/* Zoom controls */}
+      <div style={{ position: 'fixed', bottom: 16, right: 16, display: 'flex', gap: 4, zIndex: 50 }}>
+        <button onClick={() => setZoom(z => Math.min(2, z + 0.25))} className="btn btn-ghost btn-sm">+</button>
+        <button onClick={() => setZoom(1)} className="btn btn-ghost btn-sm">{Math.round(zoom * 100)}%</button>
+        <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} className="btn btn-ghost btn-sm">−</button>
+      </div>
 
       {/* Toast */}
       {toast && <div className="toast">{toast}</div>}
