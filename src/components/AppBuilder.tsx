@@ -30,6 +30,19 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   const [editNodeNotes, setEditNodeNotes] = useState('');
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // ─── Function-to-Function Edge Connect state ───
+  const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
+  const [longPressNode, setLongPressNode] = useState<string | null>(null);
+  const [draggingEdge, setDraggingEdge] = useState<{
+    fromNodeId: string;
+    fromFunctionId: string;
+    fromFunctionName: string;
+    fromFunctionIcon: string;
+  } | null>(null);
+  const [dragLinePos, setDragLinePos] = useState<{ x: number; y: number } | null>(null);
+  const [hoveredTargetNode, setHoveredTargetNode] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -194,6 +207,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   const deleteFunction = async (fnId: string) => {
     await api('DELETE', `/functions/${fnId}`);
     setFunctions(prev => prev.filter(f => f.id !== fnId));
+    setEdges(prev => prev.filter(e => e.from_function_id !== fnId && e.to_function_id !== fnId));
   };
 
   const deleteNode = async (nodeId: string) => {
@@ -215,6 +229,53 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     setConnectFirst(null); setConnectSecond(null); setConnectMode(false);
   };
 
+  // ─── Function-to-Function Edge Connect ───
+  const createFunctionEdge = async (toNodeId: string, toFunctionId?: string) => {
+    if (!draggingEdge || !projectId) return;
+    // Prevent self-connect
+    if (draggingEdge.fromNodeId === toNodeId) {
+      setToast('Cannot connect node to itself');
+      setTimeout(() => setToast(''), 2000);
+      setDraggingEdge(null); setDragLinePos(null); setHoveredTargetNode(null);
+      return;
+    }
+    // Build label: source function name → target function/node name
+    const targetNode = nodes.find(n => n.id === toNodeId);
+    const targetFn = toFunctionId ? functions.find(f => f.id === toFunctionId) : null;
+    const label = `${draggingEdge.fromFunctionName} → ${targetFn?.name || targetNode?.name || '?'}`;
+
+    try {
+      const edge = await api('POST', `/projects/${projectId}/edges`, {
+        from_node_id: draggingEdge.fromNodeId,
+        to_node_id: toNodeId,
+        from_function_id: draggingEdge.fromFunctionId,
+        to_function_id: toFunctionId || null,
+        label,
+      });
+      setEdges(prev => [...prev, edge]);
+      setToast(`${draggingEdge.fromFunctionIcon} ${draggingEdge.fromFunctionName} → ${targetFn?.icon || '📦'} ${targetFn?.name || targetNode?.name}`);
+      setTimeout(() => setToast(''), 2500);
+    } catch (err: any) {
+      if (err?.error === 'DUPLICATE') {
+        setToast('Edge already exists');
+      } else {
+        setToast(err?.message || 'Failed to create edge');
+      }
+      setTimeout(() => setToast(''), 2000);
+    }
+    setDraggingEdge(null); setDragLinePos(null); setHoveredTargetNode(null);
+  };
+
+  // Cancel function edge connect / long-press overlay
+  const cancelEdgeConnect = () => {
+    setLongPressNode(null);
+    setLongPressTimer(null);
+    setDraggingEdge(null);
+    setDragLinePos(null);
+    setHoveredTargetNode(null);
+    setContextMenu(null);
+  };
+
   const exportPlan = () => {
     const order: string[] = [];
     const inD: Record<string, number> = {};
@@ -231,7 +292,18 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       const n = nm[nid]; if (!n) return;
       const fns = functions.filter(f => f.node_id === nid).sort((a, b) => a.sort_order - b.sort_order);
       md += `### ${i + 1}. 📦 ${n.name}\n`;
-      if (fns.length) md += `- **Functions:** ${fns.map(f => f.icon + f.name).join(', ')}\n`;
+      if (fns.length) {
+        md += `- **Functions:** ${fns.map(f => f.icon + f.name).join(', ')}\n`;
+        // Show function-level outgoing edges
+        fns.forEach(f => {
+          const outEdges = edges.filter(e => e.from_function_id === f.id);
+          outEdges.forEach(e => {
+            const tgtNode = nodes.find(tn => tn.id === e.to_node_id);
+            const tgtFn = functions.find(tf => tf.id === e.to_function_id);
+            md += `  - ${f.icon}${f.name} → ${tgtFn?.icon || ''}${tgtFn?.name || tgtNode?.name || '?'}\n`;
+          });
+        });
+      }
       md += '\n';
     });
     const blob = new Blob([md], { type: 'text/markdown' });
@@ -242,24 +314,39 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   const nodeFns = (nid: string) => functions.filter(f => f.node_id === nid).sort((a, b) => a.sort_order - b.sort_order);
 
-  // Touch/mouse drag handlers
+  // Touch/mouse drag handlers (with long-press detection)
   const handleNodePointerDown = (e: React.PointerEvent, node: NodeItem) => {
-    if (connectMode) return;
+    if (connectMode || draggingEdge) return;
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = { nodeId: node.id, startX: e.clientX, startY: e.clientY, nodeX: node.x, nodeY: node.y };
+
+    // Start long-press timer (800ms)
+    if (longPressTimer) clearTimeout(longPressTimer);
+    const timer = setTimeout(() => {
+      setLongPressNode(node.id);
+      setLongPressTimer(null);
+      dragRef.current = null; // cancel normal drag
+    }, 800);
+    setLongPressTimer(timer);
   };
 
   const handleNodePointerMove = (e: React.PointerEvent, node: NodeItem) => {
     if (!dragRef.current || dragRef.current.nodeId !== node.id) return;
     const dx = e.clientX - dragRef.current.startX;
     const dy = e.clientY - dragRef.current.startY;
+    // Cancel long-press if moved > 10px
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      if (longPressTimer) { clearTimeout(longPressTimer); setLongPressTimer(null); }
+    }
     const newX = Math.max(0, dragRef.current.nodeX + dx);
     const newY = Math.max(0, dragRef.current.nodeY + dy);
     setNodes(prev => prev.map(n => n.id === node.id ? { ...n, nodeX: newX, nodeY: newY } : n));
   };
 
   const handleNodePointerUp = (e: React.PointerEvent, node: NodeItem) => {
+    // Clear long-press timer
+    if (longPressTimer) { clearTimeout(longPressTimer); setLongPressTimer(null); }
     if (!dragRef.current || dragRef.current.nodeId !== node.id) return;
     const dx = e.clientX - dragRef.current.startX;
     const dy = e.clientY - dragRef.current.startY;
@@ -269,6 +356,65 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     dragRef.current = null;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
   };
+
+  // ─── Canvas-level handlers for edge drag-line ───
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  const handleCanvasPointerMove = (e: React.PointerEvent) => {
+    if (!draggingEdge) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left + canvas.scrollLeft;
+    const y = e.clientY - rect.top + canvas.scrollTop;
+    setDragLinePos({ x, y });
+
+    // Hit-test: find node within 60px of cursor
+    let closestNodeId: string | null = null;
+    let closestDist = Infinity;
+    nodes.forEach(n => {
+      const nodeX = n.x;
+      const nodeY = n.y;
+      const cx = nodeX + (n.w || 180) / 2;
+      const cy = nodeY + (n.h || 80) / 2;
+      const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+      if (dist < 60 && dist < closestDist) {
+        closestDist = dist;
+        closestNodeId = n.id;
+      }
+    });
+    setHoveredTargetNode(closestNodeId);
+  };
+
+  const handleCanvasPointerUp = () => {
+    if (!draggingEdge) return;
+    // If hovering a target node with no function ports or user dropped on empty space, cancel
+    if (!hoveredTargetNode) {
+      cancelEdgeConnect();
+      return;
+    }
+    // If target node has no functions, create node-level edge (to_function_id: null)
+    const targetFns = nodeFns(hoveredTargetNode);
+    if (!targetFns.length) {
+      createFunctionEdge(hoveredTargetNode, undefined);
+    }
+    // Otherwise wait for user to tap a specific port — if they release on canvas backdrop, cancel
+    else {
+      cancelEdgeConnect();
+    }
+  };
+
+  // Close context menu on outside click / Escape
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('.context-menu')) setContextMenu(null);
+    };
+    const keyHandler = (e: KeyboardEvent) => { if (e.key === 'Escape') setContextMenu(null); };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('keydown', keyHandler);
+    return () => { document.removeEventListener('mousedown', handler); document.removeEventListener('keydown', keyHandler); };
+  }, [contextMenu]);
 
   // ─── Empty state ─────────────────────────────────
   if (!projectId) {
@@ -294,21 +440,36 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     const active = selectedNode === n.id;
     const x = n.nodeX ?? n.x;
     const y = n.nodeY ?? n.y;
+    const isLongPressed = longPressNode === n.id;
+    const isTarget = hoveredTargetNode === n.id;
+
+    // Check if any outgoing function-edges from this node's functions
+    const outgoingFnEdges = edges.filter(e => e.from_function_id && fns.some(f => f.id === e.from_function_id));
 
     return (
       <div
-        className={`node-card${active ? ' active' : ''}${isConn ? ' connecting' : ''}`}
+        className={`node-card${active ? ' active' : ''}${isConn ? ' connecting' : ''}${isLongPressed ? ' long-press-pulse' : ''}${isTarget ? ' target-port-visible' : ''}`}
         style={{ left: x, top: y, width: n.w || 180 }}
         onClick={(e) => {
           e.stopPropagation();
           if (connectMode) {
             if (!connectFirst) setConnectFirst(n.id);
             else if (!connectSecond) setConnectSecond(n.id);
+          } else if (draggingEdge) {
+            // During edge drag, clicking on a node without functions creates node-level edge
+            const targetFns = nodeFns(n.id);
+            if (!targetFns.length) {
+              createFunctionEdge(n.id, undefined);
+            }
           } else {
             setSelectedNode(n.id);
           }
         }}
         onDoubleClick={() => setEditingNode(n.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setContextMenu({ x: e.clientX, y: e.clientY, nodeId: n.id });
+        }}
         onPointerDown={(e) => handleNodePointerDown(e, n)}
         onPointerMove={(e) => handleNodePointerMove(e, n)}
         onPointerUp={(e) => handleNodePointerUp(e, n)}
@@ -320,9 +481,46 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
             {n.notes && <div className="node-meta-notes">🗒️ {n.notes.slice(0, 60)}{n.notes.length > 60 ? '...' : ''}</div>}
           </div>
         )}
-        {fns.slice(0, 4).map(f => (
-          <span key={f.id} className="node-fn-tag">{f.icon || '⚙️'} {f.name}</span>
-        ))}
+        {fns.slice(0, 4).map(f => {
+          const outEdges = edges.filter(e => e.from_function_id === f.id);
+          return (
+            <span key={f.id} className="node-fn-tag">
+              {/* Target port visible when dragging edge near this node */}
+              {isTarget && (
+                <span
+                  className="edge-port fn-port"
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    createFunctionEdge(n.id, f.id);
+                  }}
+                />
+              )}
+              {f.icon || '⚙️'} {f.name}
+              {outEdges.map(e => {
+                const targetNode = nodes.find(tn => tn.id === e.to_node_id);
+                const targetFn = functions.find(tf => tf.id === e.to_function_id);
+                return (
+                  <span key={e.id} className="fn-edge-label">
+                    → {targetFn?.icon || ''} {targetFn?.name || targetNode?.name || '?'}
+                  </span>
+                );
+              })}
+            </span>
+          );
+        })}
+        {/* Node-level port for target (bottom-right) */}
+        {isTarget && fns.length > 0 && (
+          <span
+            className="edge-port node-port"
+            title="Connect to node (no function)"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              createFunctionEdge(n.id, undefined);
+            }}
+          />
+        )}
         {!fns.length && !n.description && !n.notes && <div className="node-hint">Double-click to edit</div>}
       </div>
     );
@@ -461,6 +659,153 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
           .user-menu-dropdown { right: -60px; min-width: 200px; }
           .fn-desc { max-width: 200px; }
         }
+
+        /* ─── Function-to-Function Edge Connect Styles ─── */
+
+        /* Pulse animation for long-pressed node */
+        @keyframes pulseLongPress {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+        }
+        .node-card.long-press-pulse {
+          animation: pulseLongPress 0.6s ease-in-out infinite;
+          border-color: var(--accent);
+          box-shadow: 0 0 0 3px var(--accent-ring);
+        }
+
+        /* Target ports visible when dragging edge near node */
+        .node-card.target-port-visible {
+          border-color: var(--accent);
+          box-shadow: 0 0 0 2px var(--accent-ring);
+        }
+
+        /* Edge port circles */
+        .edge-port {
+          display: inline-block;
+          width: 12px; height: 12px;
+          border-radius: 50%;
+          background: var(--accent);
+          border: 2px solid var(--bg);
+          opacity: 0;
+          transition: opacity 0.15s, transform 0.15s;
+          cursor: crosshair;
+          vertical-align: middle;
+          margin-right: 3px;
+        }
+        .target-port-visible .edge-port.fn-port { opacity: 1; }
+        .edge-port.fn-port:hover { transform: scale(1.4); background: var(--accent-hover); }
+
+        .edge-port.node-port {
+          opacity: 0;
+          position: absolute;
+          bottom: -4px;
+          right: -4px;
+          width: 14px; height: 14px;
+          background: var(--accent);
+          border: 2px solid var(--bg);
+        }
+        .target-port-visible .edge-port.node-port { opacity: 1; animation: pulseLongPress 1s ease-in-out infinite; }
+        .edge-port.node-port:hover { transform: scale(1.4); background: var(--accent-hover); }
+
+        /* Function edge labels on node cards */
+        .fn-edge-label {
+          display: inline;
+          font-size: 8px;
+          color: var(--accent);
+          margin-left: 2px;
+          font-weight: 500;
+        }
+
+        /* Lock canvas scroll during edge drag */
+        .canvas.edge-dragging {
+          overflow: hidden;
+          touch-action: none;
+        }
+
+        /* Function selector overlay items */
+        .fn-selector-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          width: 100%;
+          padding: 10px 12px;
+          border: none;
+          background: var(--surface-hover);
+          color: var(--text-primary);
+          font-size: 13px;
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          margin-bottom: 4px;
+          font-family: inherit;
+        }
+        .fn-selector-item:hover {
+          background: var(--accent-bg);
+          color: var(--text-primary);
+        }
+        .fn-selector-item:active {
+          transform: scale(0.98);
+        }
+
+        /* Right-click context menu */
+        .context-menu {
+          background: var(--surface-elevated);
+          border: 1px solid var(--border-hover);
+          border-radius: var(--radius-md);
+          padding: 4px;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+          min-width: 180px;
+        }
+
+        /* Mobile: fn-selector modal bottom-sheet */
+        @media (max-width: 768px) {
+          .fn-selector-modal {
+            max-width: 100% !important;
+            border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+          }
+        }
+        .context-menu-section {
+          padding: 2px 0;
+        }
+        .context-menu-title {
+          padding: 6px 10px;
+          font-size: 10px;
+          font-weight: 600;
+          color: var(--text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .context-menu-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          padding: 7px 10px;
+          border: none;
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 13px;
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          font-family: inherit;
+          text-align: left;
+        }
+        .context-menu-item:hover {
+          background: var(--surface-hover);
+          color: var(--text-primary);
+        }
+        .context-menu-item.muted {
+          color: var(--text-muted);
+          cursor: default;
+          font-style: italic;
+        }
+        .context-menu-item.muted:hover {
+          background: transparent;
+        }
+        .context-menu-divider {
+          height: 1px;
+          background: var(--border);
+          margin: 4px 0;
+        }
       `}</style>
 
       {/* Topbar */}
@@ -592,23 +937,71 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         </div>
 
         {/* Canvas */}
-        <div className="canvas" onClick={() => setSelectedNode(null)}>
+        <div
+          className={`canvas${draggingEdge ? ' edge-dragging' : ''}`}
+          onClick={() => { setSelectedNode(null); if (contextMenu) setContextMenu(null); }}
+          ref={canvasRef}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerUp={handleCanvasPointerUp}
+        >
           <div className="canvas-grid" />
 
-          {/* Edges */}
+          {/* Edges + drag-line SVG */}
           <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', minWidth: 2000, minHeight: 2000 }}>
             {edges.map(e => {
               const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
               if (!fn || !tn) return null;
+              // For function-to-function edges, draw line from source function position
+              let x1 = fn.x + (fn.w || 180);
+              let y1 = fn.y + 30;
+              if (e.from_function_id) {
+                const srcFn = functions.find(f => f.id === e.from_function_id);
+                if (srcFn) {
+                  const fns = nodeFns(e.from_node_id);
+                  const idx = fns.findIndex(f => f.id === srcFn.id);
+                  x1 = fn.x + (fn.w || 180);
+                  y1 = fn.y + 50 + idx * 18;
+                }
+              }
+              let x2 = tn.x;
+              let y2 = tn.y + 30;
+              if (e.to_function_id) {
+                const tgtFn = functions.find(f => f.id === e.to_function_id);
+                if (tgtFn) {
+                  const fns = nodeFns(e.to_node_id);
+                  const idx = fns.findIndex(f => f.id === tgtFn.id);
+                  x2 = tn.x;
+                  y2 = tn.y + 50 + idx * 18;
+                }
+              }
               return (
                 <line
                   key={e.id}
-                  x1={fn.x + (fn.w || 180)} y1={fn.y + 30}
-                  x2={tn.x} y2={tn.y + 30}
-                  stroke="var(--border-hover)" strokeWidth={2} strokeLinecap="round"
+                  x1={x1} y1={y1}
+                  x2={x2} y2={y2}
+                  stroke={e.from_function_id ? 'var(--accent)' : 'var(--border-hover)'}
+                  strokeWidth={2} strokeLinecap="round"
+                  strokeDasharray={e.from_function_id ? undefined : undefined}
                 />
               );
             })}
+            {/* Drag line during edge creation */}
+            {draggingEdge && dragLinePos && (() => {
+              const srcNode = nodes.find(n => n.id === draggingEdge.fromNodeId);
+              if (!srcNode) return null;
+              const fns = nodeFns(draggingEdge.fromNodeId);
+              const idx = fns.findIndex(f => f.id === draggingEdge.fromFunctionId);
+              const sx = srcNode.x + (srcNode.w || 180);
+              const sy = srcNode.y + 50 + idx * 18;
+              return (
+                <line
+                  x1={sx} y1={sy}
+                  x2={dragLinePos.x} y2={dragLinePos.y}
+                  stroke="var(--accent)" strokeWidth={2} strokeLinecap="round"
+                  strokeDasharray="6 4" opacity={0.8}
+                />
+              );
+            })()}
           </svg>
 
           {/* Nodes */}
@@ -631,7 +1024,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
         </div>
       </div>
 
-      {/* Connect confirmation modal */}
+      {/* Connect confirmation modal (existing node-to-node) */}
       {connectSecond && (
         <div className="modal-overlay fade-in">
           <div className="modal-card" style={{ maxWidth: 400 }}>
@@ -646,6 +1039,102 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
               <button onClick={confirmConnect} className="btn btn-primary btn-sm">Connect</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ─── Function Selector Overlay (long-press) ─── */}
+      {longPressNode && (
+        <div className="modal-overlay fade-in" onClick={() => cancelEdgeConnect()}>
+          <div className="modal-card fn-selector-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 320 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 15, color: 'var(--text-primary)' }}>
+              {nodes.find(n => n.id === longPressNode)?.name || 'Select Function'}
+            </h3>
+            {(() => {
+              const fns = nodeFns(longPressNode);
+              if (!fns.length) {
+                return (
+                  <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                    No functions — add one first
+                  </div>
+                );
+              }
+              return fns.map(f => (
+                <button
+                  key={f.id}
+                  className="fn-selector-item"
+                  onClick={() => {
+                    setDraggingEdge({
+                      fromNodeId: longPressNode,
+                      fromFunctionId: f.id,
+                      fromFunctionName: f.name,
+                      fromFunctionIcon: f.icon || '⚙️',
+                    });
+                    setLongPressNode(null);
+                    setLongPressTimer(null);
+                  }}
+                >
+                  <span style={{ fontSize: 15 }}>{f.icon || '⚙️'}</span>
+                  <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
+                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>drag →</span>
+                </button>
+              ));
+            })()}
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
+              <button onClick={() => cancelEdgeConnect()} className="btn btn-ghost btn-sm" style={{ width: '100%' }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Right-Click Context Menu (desktop) ─── */}
+      {contextMenu && (
+        <div
+          className="context-menu fade-in"
+          style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 300 }}
+        >
+          {(() => {
+            const nodeFnsList = nodeFns(contextMenu.nodeId);
+            return (
+              <>
+                <div className="context-menu-section">
+                  <div className="context-menu-title">Connect from:</div>
+                  {nodeFnsList.map(f => (
+                    <button
+                      key={f.id}
+                      className="context-menu-item"
+                      onClick={() => {
+                        setDraggingEdge({
+                          fromNodeId: contextMenu.nodeId,
+                          fromFunctionId: f.id,
+                          fromFunctionName: f.name,
+                          fromFunctionIcon: f.icon || '⚙️',
+                        });
+                        setContextMenu(null);
+                      }}
+                    >
+                      <span>{f.icon || '⚙️'}</span>
+                      <span>{f.name}</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 'auto' }}>drag →</span>
+                    </button>
+                  ))}
+                  {!nodeFnsList.length && (
+                    <div className="context-menu-item muted">No functions — add one first</div>
+                  )}
+                </div>
+                <div className="context-menu-divider" />
+                <button
+                  className="context-menu-item"
+                  onClick={() => { setEditingNode(contextMenu.nodeId); setContextMenu(null); }}
+                >✏️ Edit</button>
+                <button
+                  className="context-menu-item"
+                  onClick={() => { deleteNode(contextMenu.nodeId); setContextMenu(null); }}
+                >🗑️ Delete</button>
+              </>
+            );
+          })()}
         </div>
       )}
 
