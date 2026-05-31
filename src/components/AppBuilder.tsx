@@ -5,6 +5,7 @@ import { signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useState, useCallback, useEffect, useRef } from 'react';
+import SubDiagram from './SubDiagram';
 
 interface Project { id: string; name: string; }
 interface NodeItem { id: string; name: string; description?: string; notes?: string; x: number; y: number; w: number; h: number; fnCount: number; }
@@ -28,6 +29,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [deleteEdgeTarget, setDeleteEdgeTarget] = useState<EdgeItem | null>(null);
+  const [subDiagramNodeId, setSubDiagramNodeId] = useState<string | null>(null);
 
   // ─── Function-to-Function Edge Connect state ───
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
@@ -371,14 +373,15 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       const fns = functions.filter(f => f.node_id === nid).sort((a, b) => a.sort_order - b.sort_order);
       md += `### ${i + 1}. 📦 ${n.name}\n`;
       if (fns.length) {
-        md += `- **Functions:** ${fns.map(f => f.icon + f.name).join(', ')}\n`;
-        // Show function-level outgoing edges
         fns.forEach(f => {
           const outEdges = edges.filter(e => e.from_function_id === f.id);
+          md += `- ${f.icon}${f.name}${outEdges.length ? ` (${outEdges.length} edge${outEdges.length > 1 ? 's' : ''})` : ''}\n`;
           outEdges.forEach(e => {
             const tgtNode = nodes.find(tn => tn.id === e.to_node_id);
             const tgtFn = functions.find(tf => tf.id === e.to_function_id);
-            md += `  - ${f.icon}${f.name} → ${tgtFn?.icon || ''}${tgtFn?.name || tgtNode?.name || '?'}\n`;
+            md += `  - → ${tgtFn?.icon || ''}${tgtFn?.name || tgtNode?.name || '?'}`;
+            if (tgtNode && tgtNode.id !== nid) md += ` *(in ${tgtNode.name})*`;
+            md += '\n';
           });
         });
       }
@@ -482,7 +485,14 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
           e.stopPropagation();
           setSelectedNode(n.id);
         }}
-        onDoubleClick={() => setEditingNode(n.id)}
+        onDoubleClick={() => {
+          const fns = nodeFns(n.id);
+          if (fns.length > 0) {
+            setSubDiagramNodeId(n.id);
+          } else {
+            setEditingNode(n.id);  // fallback: edit if no functions
+          }
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           setContextMenu({ x: e.clientX, y: e.clientY, nodeId: n.id });
@@ -523,10 +533,30 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
             </span>
           );
         })}
-        {!fns.length && !n.description && !n.notes && <div className="node-hint">Double-click to edit</div>}
+        {!fns.length && !n.description && !n.notes && <div className="node-hint">Double-click to add functions</div>}
+        {fns.length > 0 && !n.description && !n.notes && <div className="node-hint">Double-click for function canvas</div>}
       </div>
     );
   };
+
+  // ─── Sub-Diagram Mode ───
+  if (subDiagramNodeId) {
+    const subNode = nodes.find(n => n.id === subDiagramNodeId);
+    if (!subNode) { setSubDiagramNodeId(null); return null; }
+    return (
+      <SubDiagram
+        node={subNode}
+        functions={nodeFns(subDiagramNodeId)}
+        edges={edges}
+        allNodes={nodes}
+        allFunctions={functions}
+        onBack={() => setSubDiagramNodeId(null)}
+        onUpdate={() => loadData()}
+        projectId={projectId}
+        projectName={projectName}
+      />
+    );
+  }
 
   return (
     <div className="app-layout">
