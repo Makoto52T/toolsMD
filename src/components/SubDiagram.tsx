@@ -120,6 +120,7 @@ export default function SubDiagram({
   };
 
   const deleteFunction = async (fnId: string) => {
+    if (!confirm('Delete this function? All connected edges will also be removed.')) return;
     await api('DELETE', `/functions/${fnId}`);
     setSelectedFn(null);
     setEditingFn(null);
@@ -364,6 +365,11 @@ export default function SubDiagram({
         .fn-card:hover .fn-delete-btn,
         .fn-card.active .fn-delete-btn { opacity: 1; }
 
+        .modal-card:focus-within {
+          outline: 3px solid var(--accent);
+          outline-offset: 2px;
+        }
+
         /* Edge label pill */
         .edge-label-pill {
           position: absolute;
@@ -559,11 +565,13 @@ export default function SubDiagram({
       {editingFn && (
         <div className="modal-overlay fade-in mobile-sheet" onClick={() => setEditingFn(null)}>
           <div className="modal-card" onClick={e => e.stopPropagation()} style={{ 
-            maxWidth: 700, 
-            width: '100%', 
-            maxHeight: '90vh',
+            width: '95vw',
+            maxWidth: 800, 
+            height: '90vh',
             display: 'flex',
             flexDirection: 'column',
+            borderRadius: 12,
+            overflowY: 'auto',
           }}>
             <h3 style={{ margin: '0 0 16px', fontSize: 16, color: 'var(--text-primary)', flexShrink: 0 }}>✏️ Edit Function</h3>
             <div style={{ marginBottom: 12, flexShrink: 0 }}>
@@ -585,16 +593,16 @@ export default function SubDiagram({
                 style={{
                   flex: 1,
                   width: '100%',
-                  minHeight: 200,
-                  padding: '10px 12px',
+                  minHeight: 300,
+                  padding: '12px 14px',
                   border: '1px solid var(--border)',
                   borderRadius: 'var(--radius-sm)',
                   background: 'var(--bg)',
                   color: 'var(--text-primary)',
-                  fontSize: 14,
+                  fontSize: 15,
                   resize: 'vertical',
                   fontFamily: 'inherit',
-                  lineHeight: 1.6,
+                  lineHeight: 1.7,
                 }}
               />
             </div>
