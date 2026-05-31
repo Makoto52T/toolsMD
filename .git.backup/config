@@ -1,0 +1,11 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[user]
+	name = Makoto52T
+	email = toonteamm@gmail.com
+[remote "origin"]
+	url = https://github.com/Makoto52T/toolsMD.git
+	fetch = +refs/heads/*:refs/remotes/origin/*

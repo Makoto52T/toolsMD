@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mv /root/TMD/.claude/agents/fullstack-web-architect.md /root/TMD/.claude/agents/t.md)",
+      "Bash(mv /root/TMD/.claude/agent-memory/fullstack-web-architect /root/TMD/.claude/agent-memory/t)"
+    ]
+  }
+}
