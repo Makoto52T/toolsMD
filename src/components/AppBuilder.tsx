@@ -7,6 +7,8 @@ import Link from 'next/link';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import SubDiagram from './SubDiagram';
 
+const safeJsonParse = (v: any) => { try { return JSON.parse(v); } catch { return null; } };
+
 interface Project { id: string; name: string; }
 interface NodeItem { id: string; name: string; description?: string; notes?: string; x: number; y: number; w: number; h: number; fnCount: number; }
 interface FunctionItem { id: string; node_id: string; name: string; description?: string; fn_type?: string; schema?: any; icon: string; category: string; sort_order: number; }
@@ -84,7 +86,11 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
       const d = await api('GET', `/projects/${projectId}`);
       setProjectName(d.project?.name || projectName);
       setNodes((d.nodes || []).map((n: any) => ({ ...n, fnCount: 0 })));
-      setFunctions(d.functions || []);
+      // Parse JSON columns (mysql2 returns strings for JSON type)
+      setFunctions((d.functions || []).map((f: any) => ({
+        ...f,
+        schema: typeof f.schema === 'string' ? safeJsonParse(f.schema) : (f.schema || null),
+      })));
       setEdges(d.edges || []);
     } catch (err) {
       console.error('loadData failed:', err);
