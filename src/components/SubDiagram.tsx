@@ -329,12 +329,18 @@ export default function SubDiagram({
 
   // ─── Open editing modal ───
   const openEditFn = (fn: FunctionItem) => {
+    // Reset all state FIRST before setting new values
+    setEditFnName('');
+    setEditFnDesc('');
+    setEditFnType('custom');
+    setEditFnSchema({ config: {}, outputs: [] });
     setEditingFn(fn.id);
     setEditFnName(fn.name);
     setEditFnDesc(fn.description || '');
     setEditFnType(fn.fn_type || 'custom');
     // Convert serialized headers/body back to list format for editor
-    const schema = fn.schema ? { ...fn.schema, config: { ...fn.schema.config } } : { config: {}, outputs: [] };
+    const schema = fn.schema && typeof fn.schema === 'object' ? JSON.parse(JSON.stringify(fn.schema)) : { config: {}, outputs: [] };
+    if (!schema.config) schema.config = {};
     if (schema.config?.headers && typeof schema.config.headers === 'object' && !Array.isArray(schema.config.headers)) {
       schema.config.headersList = Object.entries(schema.config.headers as Record<string,string>).map(([k,v]) => ({ key: k, value: v }));
     }
