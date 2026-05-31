@@ -377,6 +377,54 @@ export default function SubDiagram({
           border: 1px solid var(--border-accent);
           font-weight: 500;
         }
+
+        /* Layout */
+        .app-layout { background: var(--bg); height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+        .modal-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 20px; max-height: 70vh; overflow-y: auto; width: 100%; }
+
+        /* Canvas */
+        .canvas { flex: 1; position: relative; overflow: auto; -webkit-overflow-scrolling: touch; }
+        .canvas-grid { position: absolute; inset: 0; min-width: 2000px; min-height: 2000px; opacity: 0.025; background-image: radial-gradient(circle, var(--text-muted) 1px, transparent 1px); background-size: 24px 24px; pointer-events: none; }
+
+        /* Topbar */
+        .topbar { display: flex; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); align-items: center; height: 48px; flex-shrink: 0; }
+        .topbar-name { font-size: 14px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+        .topbar-actions { display: flex; gap: 6px; align-items: center; }
+
+        /* Mobile toolbar */
+        .mobile-toolbar { display: none; }
+        @media (max-width: 768px) {
+          .mobile-toolbar {
+            display: flex;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: var(--bg);
+            border-bottom: 1px solid var(--border);
+            padding: 6px 10px;
+            gap: 6px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+          .mobile-toolbar button { flex-shrink: 0; white-space: nowrap; }
+          .topbar { position: sticky; top: 0; z-index: 101; }
+        }
+
+        /* Textarea */
+        .textarea-desc { width: 100%; min-height: 60px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-primary); font-size: 13px; resize: vertical; font-family: inherit; }
+        .textarea-desc:focus { outline: none; border-color: var(--accent); }
+
+        /* Function create */
+        .fn-create-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
+        .fn-create-card { margin-top: 16px; padding: 12px; background: var(--bg); border: 1px solid var(--border-hover); border-radius: var(--radius-md); }
+
+        /* Edge wizard */
+        .fn-selector-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; margin-bottom: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; color: var(--text-primary); font-size: 13px; text-align: left; font-family: inherit; }
+        .fn-selector-item:hover { background: var(--surface-hover); border-color: var(--border-hover); }
+        .wizard-dim { opacity: 0.4; }
       `}</style>
 
       {/* Topbar */}
