@@ -1252,7 +1252,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                 }}
                 placeholder="e.g., User Service"
                 className="input"
-                autoFocus
                 style={{ width: '100%' }}
               />
             </div>
