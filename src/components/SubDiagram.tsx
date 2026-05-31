@@ -43,6 +43,10 @@ export default function SubDiagram({
   const [toast, setToast] = useState('');
   const [deleteEdgeTarget, setDeleteEdgeTarget] = useState<EdgeItem | null>(null);
 
+  // Execute function state
+  const [executing, setExecuting] = useState(false);
+  const [execResult, setExecResult] = useState<any>(null);
+
   // Create function modal
   const [createModal, setCreateModal] = useState(false);
   const [newFnName, setNewFnName] = useState('');
@@ -140,6 +144,21 @@ export default function SubDiagram({
     } catch (err: any) {
       setToast(err?.message || 'Failed to update');
       setTimeout(() => setToast(''), 2000);
+    }
+  };
+
+  const runFunction = async () => {
+    if (!editingFn) return;
+    setExecuting(true);
+    setExecResult(null);
+    try {
+      const res = await fetch(`/api/functions/${editingFn}/execute`, { method: 'POST' });
+      const data = await res.json();
+      setExecResult(data);
+    } catch (err: any) {
+      setExecResult({ success: false, message: err.message || 'Execution failed' });
+    } finally {
+      setExecuting(false);
     }
   };
 
@@ -1116,9 +1135,75 @@ export default function SubDiagram({
               )}
             </div>
 
+            {/* Output panel (appears after execution) */}
+            {execResult && (
+              <div style={{ flexShrink: 0, marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>📊 Output</span>
+                  {execResult.success !== false ? (
+                    <span style={{
+                      background: 'rgba(34,197,94,0.15)', color: '#22c55e',
+                      padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600
+                    }}>✅ {execResult.status || 'OK'}</span>
+                  ) : (
+                    <span style={{
+                      background: 'rgba(239,68,68,0.15)', color: '#f87171',
+                      padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600
+                    }}>❌ {execResult.message || 'Error'}</span>
+                  )}
+                  {execResult.duration_ms != null && (
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{execResult.duration_ms}ms</span>
+                  )}
+                </div>
+                {execResult.extracts && Object.keys(execResult.extracts).length > 0 && (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>Extracted values:</div>
+                    {Object.entries(execResult.extracts).map(([k, v]) => (
+                      <div key={k} style={{
+                        display: 'inline-block',
+                        background: 'rgba(59,130,246,0.12)',
+                        color: '#60a5fa',
+                        padding: '2px 8px',
+                        borderRadius: 8,
+                        fontSize: 11,
+                        margin: '2px 4px 2px 0',
+                        fontFamily: 'monospace',
+                      }}>{k}: {String(v)}</div>
+                    ))}
+                  </div>
+                )}
+                <pre style={{
+                  background: 'var(--bg)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 12px',
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  color: 'var(--text-primary)',
+                  maxHeight: 200,
+                  overflow: 'auto',
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}>{JSON.stringify(execResult.body !== undefined ? execResult.body : execResult, null, 2)}</pre>
+              </div>
+            )}
+
             {/* Footer */}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexShrink: 0, paddingTop: 12, borderTop: '1px solid var(--border)', marginTop: 12 }}>
               <button onClick={() => setEditingFn(null)} className="btn btn-ghost btn-sm">Cancel</button>
+              {(editFnType === 'http' || editFnType === 'puppeteer') && (
+                <button
+                  onClick={runFunction}
+                  disabled={executing}
+                  className="btn btn-sm"
+                  style={{
+                    background: executing ? 'var(--border)' : 'rgba(34,197,94,0.15)',
+                    color: executing ? 'var(--text-muted)' : '#22c55e',
+                    border: executing ? '1px solid var(--border)' : '1px solid rgba(34,197,94,0.3)',
+                  }}
+                >{executing ? '⏳ Running...' : '▶ Run'}</button>
+              )}
               <button onClick={saveEditFn} disabled={!editFnName.trim()} className="btn btn-primary btn-sm">Save</button>
             </div>
             <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8, flexShrink: 0 }}>
