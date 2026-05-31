@@ -67,6 +67,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   // Drag state
   const dragRef = useRef<{ nodeId: string; startX: number; startY: number; nodeX: number; nodeY: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const nodeElRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   // Zoom
   const [zoom, setZoom] = useState(1);
@@ -445,14 +446,14 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     if (edgeWizard) return;
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    dragRef.current = { nodeId: node.id, startX: e.clientX, startY: e.clientY, nodeX: node.x, nodeY: node.y };
+    dragRef.current = { nodeId: node.id, startX: e.clientX, startY: e.clientY, nodeX: (node as any).nodeX ?? node.x, nodeY: (node as any).nodeY ?? node.y };
 
     // Start long-press timer (800ms)
     if (longPressTimer) clearTimeout(longPressTimer);
     const timer = setTimeout(() => {
       startEdgeWizard(node.id);
       setLongPressTimer(null);
-      dragRef.current = null; // cancel normal drag
+      dragRef.current = null;
     }, 800);
     setLongPressTimer(timer);
   };
@@ -467,7 +468,11 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     }
     const newX = Math.max(0, dragRef.current.nodeX + dx);
     const newY = Math.max(0, dragRef.current.nodeY + dy);
-    setNodes(prev => prev.map(n => n.id === node.id ? { ...n, nodeX: newX, nodeY: newY } : n));
+    // Use CSS transform for smooth dragging (no re-render)
+    const el = nodeElRefs.current.get(node.id);
+    if (el) {
+      el.style.transform = `translate(${newX - (dragRef.current.nodeX)}px, ${newY - (dragRef.current.nodeY)}px)`;
+    }
   };
 
   const handleNodePointerUp = (e: React.PointerEvent, node: NodeItem) => {
@@ -478,6 +483,12 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     const dy = e.clientY - dragRef.current.startY;
     const newX = Math.max(0, dragRef.current.nodeX + dx);
     const newY = Math.max(0, dragRef.current.nodeY + dy);
+    // Reset CSS transform
+    const el = nodeElRefs.current.get(node.id);
+    if (el) el.style.transform = '';
+    // Update React state (triggers edge re-render with correct position)
+    setNodes(prev => prev.map(n => n.id === node.id ? { ...n, nodeX: newX, nodeY: newY } : n));
+    // Persist to DB
     updateNodePosition(node.id, newX, newY);
     dragRef.current = null;
     (e.target as HTMLElement).releasePointerCapture(e.pointerId);
@@ -532,6 +543,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
     return (
       <div
+        ref={(el) => { if (el) nodeElRefs.current.set(n.id, el); else nodeElRefs.current.delete(n.id); }}
         className={`node-card${active ? ' active' : ''}`}
         style={{ left: x, top: y, width: n.w || 180 }}
         onClick={(e) => {
@@ -988,26 +1000,28 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
             {edges.map(e => {
               const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
               if (!fn || !tn) return null;
-              let x1 = fn.x + (fn.w || 180);
-              let y1 = fn.y + 30;
+              const fx = (fn as any).nodeX ?? fn.x, fy = (fn as any).nodeY ?? fn.y;
+              const tx = (tn as any).nodeX ?? tn.x, ty = (tn as any).nodeY ?? tn.y;
+              let x1 = fx + (fn.w || 180);
+              let y1 = fy + 30;
               if (e.from_function_id) {
                 const srcFn = functions.find(f => f.id === e.from_function_id);
                 if (srcFn) {
                   const fns = nodeFns(e.from_node_id);
                   const idx = fns.findIndex(f => f.id === srcFn.id);
-                  x1 = fn.x + (fn.w || 180);
-                  y1 = fn.y + 50 + idx * 18;
+                  x1 = fx + (fn.w || 180);
+                  y1 = fy + 50 + idx * 18;
                 }
               }
-              let x2 = tn.x;
-              let y2 = tn.y + 30;
+              let x2 = tx;
+              let y2 = ty + 30;
               if (e.to_function_id) {
                 const tgtFn = functions.find(f => f.id === e.to_function_id);
                 if (tgtFn) {
                   const fns = nodeFns(e.to_node_id);
                   const idx = fns.findIndex(f => f.id === tgtFn.id);
-                  x2 = tn.x;
-                  y2 = tn.y + 50 + idx * 18;
+                  x2 = tx;
+                  y2 = ty + 50 + idx * 18;
                 }
               }
               return (
@@ -1028,27 +1042,29 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
             {edges.map(e => {
               const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
               if (!fn || !tn) return null;
+              const fx = (fn as any).nodeX ?? fn.x, fy = (fn as any).nodeY ?? fn.y;
+              const tx = (tn as any).nodeX ?? tn.x, ty = (tn as any).nodeY ?? tn.y;
               // For function-to-function edges, draw line from source function position
-              let x1 = fn.x + (fn.w || 180);
-              let y1 = fn.y + 30;
+              let x1 = fx + (fn.w || 180);
+              let y1 = fy + 30;
               if (e.from_function_id) {
                 const srcFn = functions.find(f => f.id === e.from_function_id);
                 if (srcFn) {
                   const fns = nodeFns(e.from_node_id);
                   const idx = fns.findIndex(f => f.id === srcFn.id);
-                  x1 = fn.x + (fn.w || 180);
-                  y1 = fn.y + 50 + idx * 18;
+                  x1 = fx + (fn.w || 180);
+                  y1 = fy + 50 + idx * 18;
                 }
               }
-              let x2 = tn.x;
-              let y2 = tn.y + 30;
+              let x2 = tx;
+              let y2 = ty + 30;
               if (e.to_function_id) {
                 const tgtFn = functions.find(f => f.id === e.to_function_id);
                 if (tgtFn) {
                   const fns = nodeFns(e.to_node_id);
                   const idx = fns.findIndex(f => f.id === tgtFn.id);
-                  x2 = tn.x;
-                  y2 = tn.y + 50 + idx * 18;
+                  x2 = tx;
+                  y2 = ty + 50 + idx * 18;
                 }
               }
               return (
