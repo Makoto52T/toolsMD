@@ -30,6 +30,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
   const [editNodeNotes, setEditNodeNotes] = useState('');
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [deleteEdgeTarget, setDeleteEdgeTarget] = useState<EdgeItem | null>(null);
 
   // ─── Function-to-Function Edge Connect state ───
   const [longPressTimer, setLongPressTimer] = useState<NodeJS.Timeout | null>(null);
@@ -229,6 +230,12 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     if (editingNode === nodeId) setEditingNode(null);
   };
 
+  const deleteEdge = async (edgeId: string) => {
+    await api('DELETE', `/edges/${edgeId}`);
+    setEdges(prev => prev.filter(e => e.id !== edgeId));
+    setDeleteEdgeTarget(null);
+  };
+
   const confirmConnect = async () => {
     if (!projectId || !connectFirst || !connectSecond) return;
     const e = await api('POST', `/projects/${projectId}/edges`, {
@@ -250,9 +257,9 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     onDone?: () => void
   ) => {
     if (!projectId) return;
-    // Prevent self-connect
-    if (fromNodeId === toNodeId) {
-      setToast('Cannot connect node to itself');
+    // Prevent connecting a function to itself
+    if (fromFunctionId && toFunctionId && fromFunctionId === toFunctionId) {
+      setToast('Cannot connect function to itself');
       setTimeout(() => setToast(''), 2000);
       onDone?.();
       return;
@@ -597,9 +604,17 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                 const targetNode = nodes.find(tn => tn.id === e.to_node_id);
                 const targetFn = functions.find(tf => tf.id === e.to_function_id);
                 return (
-                  <span key={e.id} className="fn-edge-label">
+                  <button
+                    key={e.id}
+                    className="fn-edge-label"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      setDeleteEdgeTarget(e);
+                    }}
+                    title="Tap to delete edge"
+                  >
                     → {targetFn?.icon || ''} {targetFn?.name || targetNode?.name || '?'}
-                  </span>
+                  </button>
                 );
               })}
             </span>
@@ -810,6 +825,17 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
           color: var(--accent);
           margin-left: 2px;
           font-weight: 500;
+          background: none;
+          border: none;
+          cursor: pointer;
+          padding: 0;
+          font-family: inherit;
+          text-decoration: underline;
+          text-decoration-style: dotted;
+          text-underline-offset: 2px;
+        }
+        .fn-edge-label:hover {
+          color: #f87171;
         }
 
         /* Lock canvas scroll during edge drag */
@@ -1044,6 +1070,47 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
           {/* Edges + drag-line SVG */}
           <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', minWidth: 2000, minHeight: 2000 }}>
+            {/* Invisible wide hit areas for tap-to-delete */}
+            {edges.map(e => {
+              const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
+              if (!fn || !tn) return null;
+              let x1 = fn.x + (fn.w || 180);
+              let y1 = fn.y + 30;
+              if (e.from_function_id) {
+                const srcFn = functions.find(f => f.id === e.from_function_id);
+                if (srcFn) {
+                  const fns = nodeFns(e.from_node_id);
+                  const idx = fns.findIndex(f => f.id === srcFn.id);
+                  x1 = fn.x + (fn.w || 180);
+                  y1 = fn.y + 50 + idx * 18;
+                }
+              }
+              let x2 = tn.x;
+              let y2 = tn.y + 30;
+              if (e.to_function_id) {
+                const tgtFn = functions.find(f => f.id === e.to_function_id);
+                if (tgtFn) {
+                  const fns = nodeFns(e.to_node_id);
+                  const idx = fns.findIndex(f => f.id === tgtFn.id);
+                  x2 = tn.x;
+                  y2 = tn.y + 50 + idx * 18;
+                }
+              }
+              return (
+                <line
+                  key={`hit-${e.id}`}
+                  x1={x1} y1={y1} x2={x2} y2={y2}
+                  stroke="transparent"
+                  strokeWidth={16} strokeLinecap="round"
+                  style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setDeleteEdgeTarget(e);
+                  }}
+                />
+              );
+            })}
+            {/* Visible edge lines */}
             {edges.map(e => {
               const fn = nodes.find(n => n.id === e.from_node_id), tn = nodes.find(n => n.id === e.to_node_id);
               if (!fn || !tn) return null;
@@ -1077,7 +1144,6 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                   x2={x2} y2={y2}
                   stroke={e.from_function_id ? 'var(--accent)' : 'var(--border-hover)'}
                   strokeWidth={2} strokeLinecap="round"
-                  strokeDasharray={e.from_function_id ? undefined : undefined}
                 />
               );
             })}
@@ -1181,12 +1247,12 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                   ⚙️ {edgeWizard.fromFunctionName}
                 </h3>
                 <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)' }}>Select target node:</p>
-                {nodes.filter(n => n.id !== edgeWizard.fromNodeId).length === 0 ? (
+                {nodes.length === 0 ? (
                   <div style={{ padding: '16px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                    No other nodes — create one first
+                    No nodes — create one first
                   </div>
                 ) : (
-                  nodes.filter(n => n.id !== edgeWizard.fromNodeId).map(n => {
+                  nodes.map(n => {
                     const count = nodeFns(n.id).length;
                     return (
                       <button
@@ -1195,7 +1261,7 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                         onClick={() => selectTargetNode(n)}
                       >
                         <span style={{ fontSize: 15 }}>📦</span>
-                        <span style={{ flex: 1, textAlign: 'left' }}>{n.name}</span>
+                        <span style={{ flex: 1, textAlign: 'left' }}>{n.name}{n.id === edgeWizard.fromNodeId ? ' (self)' : ''}</span>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{count} fn{count !== 1 ? 's' : ''}</span>
                       </button>
                     );
@@ -1211,24 +1277,35 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
                   ⚙️ {edgeWizard.fromFunctionName} → {edgeWizard.toNodeName}
                 </h3>
                 <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)' }}>Select target function:</p>
-                {nodeFns(edgeWizard.toNodeId).map(f => (
-                  <button
-                    key={f.id}
-                    className="fn-selector-item"
-                    onClick={() => selectTargetFunction(f)}
-                  >
-                    <span style={{ fontSize: 15 }}>{f.icon || '⚙️'}</span>
-                    <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
-                  </button>
-                ))}
-                <div style={{ borderTop: '2px dashed var(--border)', margin: '10px 0' }} />
-                <button
-                  className="fn-selector-item"
-                  onClick={() => selectTargetNodeWhole()}
-                >
-                  <span style={{ fontSize: 15 }}>📦</span>
-                  <span style={{ flex: 1, textAlign: 'left' }}>Whole node (no function)</span>
-                </button>
+                {(() => {
+                  const isSelfNode = edgeWizard.toNodeId === edgeWizard.fromNodeId;
+                  const targetFns = nodeFns(edgeWizard.toNodeId);
+                  const availableFns = isSelfNode
+                    ? targetFns.filter(f => f.id !== edgeWizard.fromFunctionId)
+                    : targetFns;
+                  return availableFns.map(f => (
+                    <button
+                      key={f.id}
+                      className="fn-selector-item"
+                      onClick={() => selectTargetFunction(f)}
+                    >
+                      <span style={{ fontSize: 15 }}>{f.icon || '⚙️'}</span>
+                      <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
+                    </button>
+                  ));
+                })()}
+                {edgeWizard.toNodeId !== edgeWizard.fromNodeId && (
+                  <>
+                    <div style={{ borderTop: '2px dashed var(--border)', margin: '10px 0' }} />
+                    <button
+                      className="fn-selector-item"
+                      onClick={() => selectTargetNodeWhole()}
+                    >
+                      <span style={{ fontSize: 15 }}>📦</span>
+                      <span style={{ flex: 1, textAlign: 'left' }}>Whole node (no function)</span>
+                    </button>
+                  </>
+                )}
               </>
             )}
 
@@ -1505,6 +1582,26 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <button onClick={() => setCheckModal(null)} className="btn btn-ghost btn-sm">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edge delete confirmation */}
+      {deleteEdgeTarget && (
+        <div className="modal-overlay fade-in" style={{ background: 'rgba(0,0,0,0.3)' }} onClick={() => setDeleteEdgeTarget(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: 380, textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: 'var(--text-primary)' }}>Delete connection?</h3>
+            <p style={{ margin: '0 0 20px', fontSize: 14, color: 'var(--text-secondary)' }}>
+              {deleteEdgeTarget.label || '(unnamed edge)'}
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button onClick={() => setDeleteEdgeTarget(null)} className="btn btn-ghost btn-sm">Cancel</button>
+              <button
+                onClick={() => deleteEdge(deleteEdgeTarget.id)}
+                className="btn btn-sm"
+                style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }}
+              >Delete</button>
             </div>
           </div>
         </div>

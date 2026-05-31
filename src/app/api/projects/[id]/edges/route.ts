@@ -12,6 +12,11 @@ export async function POST(
   const { from_node_id, to_node_id, from_function_id, to_function_id, label } = await req.json();
   if (!from_node_id || !to_node_id) return NextResponse.json({ error: 'from_node_id and to_node_id required' }, { status: 400 });
 
+  // Prevent connecting a function to itself (same-node connections are allowed)
+  if (from_function_id && to_function_id && from_function_id === to_function_id) {
+    return NextResponse.json({ error: 'SELF_REFERENCE', message: 'Cannot connect function to itself' }, { status: 400 });
+  }
+
   // Duplicate check: function-level edges are unique per (from_function_id, to_node_id, to_function_id)
   // Node-level edges are unique per (from_node_id, to_node_id) when no function IDs
   let dupQuery: string;
