@@ -62,11 +62,15 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
 
   const loadData = useCallback(async () => {
     if (!projectId) return;
-    const d = await api('GET', `/projects/${projectId}`);
-    setProjectName(d.project.name);
-    setNodes(d.nodes.map((n: any) => ({ ...n, fnCount: 0 })));
-    setFunctions(d.functions);
-    setEdges(d.edges);
+    try {
+      const d = await api('GET', `/projects/${projectId}`);
+      setProjectName(d.project?.name || projectName);
+      setNodes((d.nodes || []).map((n: any) => ({ ...n, fnCount: 0 })));
+      setFunctions(d.functions || []);
+      setEdges(d.edges || []);
+    } catch (err) {
+      console.error('loadData failed:', err);
+    }
   }, [projectId]);
 
   useEffect(() => { if (projectId) loadData(); }, [projectId, loadData]);
@@ -250,7 +254,9 @@ export default function AppBuilder({ session, projectId: initialProjectId, proje
     if (!dragRef.current || dragRef.current.nodeId !== node.id) return;
     const dx = e.clientX - dragRef.current.startX;
     const dy = e.clientY - dragRef.current.startY;
-    setNodes(prev => prev.map(n => n.id === node.id ? { ...n, x: (n as any).nodeX ?? n.x, y: (n as any).nodeY ?? n.y, nodeX: dragRef.current!.nodeX + dx, nodeY: dragRef.current!.nodeY + dy } : n));
+    const newX = Math.max(0, dragRef.current.nodeX + dx);
+    const newY = Math.max(0, dragRef.current.nodeY + dy);
+    setNodes(prev => prev.map(n => n.id === node.id ? { ...n, nodeX: newX, nodeY: newY } : n));
   };
 
   const handleNodePointerUp = (e: React.PointerEvent, node: NodeItem) => {
