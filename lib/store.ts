@@ -7,7 +7,7 @@ import { detectTagType, isTagType, type TagType } from './path-utils';
 
 export interface Node {
   id: string;
-  type: 'function' | 'http-request' | 'puppeteer' | 'sub-project';
+  type: 'function' | 'http-request' | 'puppeteer' | 'sub-project' | 'server';
   name: string;
   description: string;
   positionX: number;

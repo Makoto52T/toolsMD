@@ -22,7 +22,12 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FullPageSpinner } from '@/components/LoadingSpinner';
 import { useToast } from '@/components/Toast';
 import { FlowNode, FlowNodeData } from '@/components/canvas/FlowNode';
-import { NODE_TYPES, metaFor } from '@/components/canvas/nodeMeta';
+import { NODE_TYPES, metaFor, nodeDisplayMeta } from '@/components/canvas/nodeMeta';
+import {
+  FRONTEND_FRAMEWORKS,
+  BACKEND_FRAMEWORKS,
+  BACKEND_LANGUAGES,
+} from '@/components/canvas/stackCatalog';
 import { TagsPanel, type Tag } from '@/components/canvas/TagsPanel';
 import {
   ExecutionResultPanel,
@@ -511,6 +516,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       name: n.name,
       type: n.type,
       description: n.description,
+      config: n.config as Record<string, any> | undefined,
       executing: runningNodeId === n.id,
       onEdit: (nid: string) => setEditingNode(nodesRef.current.find((x) => x.id === nid) ?? null),
       onDelete: (nid: string) =>
@@ -772,6 +778,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             {editingNode.type === 'http-request' && (
               <HttpNodeFields node={editingNode} tags={tags} onChange={setEditingNode} />
             )}
+
+            {editingNode.type === 'server' && (
+              <ServerNodeFields node={editingNode} onChange={setEditingNode} />
+            )}
           </div>
         )}
       </Modal>
@@ -815,6 +825,240 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         onConfirm={doDeleteNode}
         onCancel={() => setDeleteTarget(null)}
       />
+    </div>
+  );
+}
+
+// ---------- Server node config fields (Edit Node modal) ----------
+// A server node = a running frontend/backend process. The user picks a stack
+// (category -> language -> framework) and a host/port for the health-check.
+const CUSTOM_FRAMEWORK = '__custom__';
+
+function ServerNodeFields({
+  node,
+  onChange,
+}: {
+  node: ApiNode;
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  const category: 'frontend' | 'backend' =
+    cfg.category === 'frontend' ? 'frontend' : 'backend';
+  const language = String(cfg.language ?? '');
+  const framework = String(cfg.framework ?? '');
+  const host = String(cfg.host ?? '');
+  const port = cfg.port != null ? String(cfg.port) : '';
+  const healthPath = String(cfg.healthPath ?? '');
+
+  const setCfg = (patch: Record<string, any>) =>
+    onChange({ ...node, config: { ...cfg, ...patch } });
+
+  // Framework options for the current category/language.
+  const frameworkOptions =
+    category === 'frontend'
+      ? (FRONTEND_FRAMEWORKS as readonly string[])
+      : language && BACKEND_FRAMEWORKS[language]
+        ? BACKEND_FRAMEWORKS[language]
+        : [];
+
+  // Is the stored framework a custom (off-catalog) value?
+  const isCustomFramework =
+    framework !== '' && !frameworkOptions.includes(framework);
+  // The select shows CUSTOM when the framework is off-catalog (or user picked it).
+  const frameworkSelectValue = isCustomFramework
+    ? CUSTOM_FRAMEWORK
+    : framework;
+
+  const switchCategory = (next: 'frontend' | 'backend') => {
+    if (next === category) return;
+    // Reset language + framework when toggling category (they don't carry over).
+    if (next === 'frontend') {
+      setCfg({ category: 'frontend', language: undefined, framework: '' });
+    } else {
+      setCfg({ category: 'backend', framework: '' });
+    }
+  };
+
+  const switchLanguage = (lang: string) => {
+    // Changing language always resets the framework (cascade).
+    setCfg({ language: lang, framework: '' });
+  };
+
+  const onFrameworkSelect = (value: string) => {
+    if (value === CUSTOM_FRAMEWORK) {
+      // Enter custom mode with an empty string the user then types into.
+      setCfg({ framework: '' });
+    } else {
+      setCfg({ framework: value });
+    }
+  };
+
+  // Live preview of the health-check URL.
+  const previewHost = host.trim() || 'localhost';
+  const previewPort = port.trim();
+  const previewScheme = previewPort === '443' ? 'https' : 'http';
+  let previewPath = healthPath.trim() || '/';
+  if (!previewPath.startsWith('/')) previewPath = '/' + previewPath;
+  const previewUrl = `${previewScheme}://${previewHost}${
+    previewPort ? ':' + previewPort : ''
+  }${previewPath}`;
+
+  // Whether to show the custom framework text input: user is in custom mode.
+  const showCustomInput =
+    frameworkSelectValue === CUSTOM_FRAMEWORK ||
+    (framework === '' && frameworkSelectValue === CUSTOM_FRAMEWORK);
+
+  return (
+    <div
+      data-testid="server-fields"
+      className="flex flex-col gap-4 rounded-xl border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] p-4"
+    >
+      {/* Category toggle */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+          Category
+        </label>
+        <div className="flex gap-2">
+          {(['frontend', 'backend'] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              data-testid={`server-category-${c}`}
+              onClick={() => switchCategory(c)}
+              className={[
+                'flex-1 rounded-lg border px-3 py-2 text-sm font-medium capitalize transition-colors',
+                category === c
+                  ? 'border-transparent text-white'
+                  : 'border-[var(--color-neutral-300)] bg-white text-[var(--color-neutral-700)]',
+              ].join(' ')}
+              style={
+                category === c
+                  ? { background: c === 'frontend' ? '#06b6d4' : '#0d9488' }
+                  : undefined
+              }
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Language (backend only) */}
+      {category === 'backend' && (
+        <div>
+          <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+            Language
+          </label>
+          <select
+            data-testid="server-language"
+            value={language}
+            onChange={(e) => switchLanguage(e.target.value)}
+            className="w-full rounded-lg border border-[var(--color-neutral-300)] bg-white px-4 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+          >
+            <option value="">Select language…</option>
+            {BACKEND_LANGUAGES.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Framework */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+          Framework
+        </label>
+        <select
+          data-testid="server-framework"
+          value={frameworkSelectValue}
+          disabled={category === 'backend' && !language}
+          onChange={(e) => onFrameworkSelect(e.target.value)}
+          className="w-full rounded-lg border border-[var(--color-neutral-300)] bg-white px-4 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+        >
+          <option value="">
+            {category === 'backend' && !language
+              ? 'Pick a language first…'
+              : 'Select framework…'}
+          </option>
+          {frameworkOptions.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+          <option value={CUSTOM_FRAMEWORK}>+ Custom…</option>
+        </select>
+        {(showCustomInput || isCustomFramework) && (
+          <input
+            type="text"
+            data-testid="server-framework-custom"
+            value={framework}
+            onChange={(e) => setCfg({ framework: e.target.value })}
+            placeholder="Custom framework name"
+            className="mt-2 w-full rounded-lg border border-[var(--color-neutral-300)] px-4 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+          />
+        )}
+      </div>
+
+      {/* Host + Port + Health path */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+            Host
+          </label>
+          <input
+            type="text"
+            data-testid="server-host"
+            value={host}
+            onChange={(e) => setCfg({ host: e.target.value })}
+            placeholder="localhost"
+            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+            Port
+          </label>
+          <input
+            type="number"
+            data-testid="server-port"
+            value={port}
+            onChange={(e) =>
+              setCfg({ port: e.target.value === '' ? undefined : Number(e.target.value) })
+            }
+            placeholder="3000"
+            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+          Health path <span className="text-[var(--color-neutral-400)]">(optional)</span>
+        </label>
+        <input
+          type="text"
+          data-testid="server-health-path"
+          value={healthPath}
+          onChange={(e) => setCfg({ healthPath: e.target.value })}
+          placeholder="/health"
+          className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-base focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+        />
+      </div>
+
+      {/* Health-check URL preview */}
+      <div className="rounded-lg bg-[var(--color-neutral-900)] px-3 py-2">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+          Health-check
+        </span>
+        <div
+          data-testid="server-url-preview"
+          className="break-all font-mono text-xs text-[var(--color-neutral-100)]"
+        >
+          {previewUrl}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1306,8 +1550,14 @@ function MobileNodeList({
 
       <div className="flex flex-col gap-3">
         {nodes.map((n) => {
-          const meta = metaFor(n.type);
+          const meta = nodeDisplayMeta(n.type, n.config as Record<string, any> | undefined);
           const outgoing = edges.filter((e) => e.sourceNodeId === n.id);
+          const sCfg = (n.config ?? {}) as Record<string, any>;
+          const sFramework = n.type === 'server' ? String(sCfg.framework ?? '') : '';
+          const sPort =
+            n.type === 'server' && sCfg.port != null && sCfg.port !== ''
+              ? String(sCfg.port)
+              : '';
           return (
             <div
               key={n.id}
@@ -1325,6 +1575,24 @@ function MobileNodeList({
                   </div>
                 </div>
               </div>
+
+              {n.type === 'server' && (sFramework || sPort) ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                  {sFramework ? (
+                    <span
+                      className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                      style={{ background: meta.color }}
+                    >
+                      {sFramework}
+                    </span>
+                  ) : null}
+                  {sPort ? (
+                    <span className="rounded-md bg-[var(--color-neutral-100)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--color-neutral-600)]">
+                      :{sPort}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
 
               {n.description ? (
                 <p className="mt-1 text-xs text-[var(--color-neutral-500)]">{n.description}</p>
@@ -1359,7 +1627,7 @@ function MobileNodeList({
                   loading={runningNodeId === n.id}
                   className="flex-1"
                 >
-                  ▶ Run
+                  {n.type === 'server' ? '▶ Ping' : '▶ Run'}
                 </Button>
                 <Button size="sm" variant="secondary" onClick={() => onEdit(n)} className="flex-1">
                   Edit

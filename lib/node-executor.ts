@@ -44,6 +44,16 @@ export interface HttpMeta {
   durationMs: number;
 }
 
+// Present for server nodes — the health-check (port ping) result. A server is
+// "reachable" if the HTTP probe got any response (even a non-2xx), since that
+// proves the port is open and serving. Network failures => reachable:false.
+export interface ServerMeta {
+  reachable: boolean;
+  url: string;
+  statusCode?: number;
+  durationMs: number;
+}
+
 export interface ExecutionResult {
   nodeId: string;
   nodeName?: string;
@@ -54,10 +64,31 @@ export interface ExecutionResult {
   // Present for http-request nodes (both success and error) so the UI can show
   // status code / headers / timing the way n8n does.
   http?: HttpMeta;
+  // Present for server nodes (health-check result).
+  server?: ServerMeta;
 }
 
 // Hard cap so a hung endpoint can't keep a serverless invocation alive forever.
 const HTTP_TIMEOUT_MS = 20000;
+// Health-check probe timeout — short so an unreachable server fails fast and
+// never blocks a chain run.
+const HEALTH_TIMEOUT_MS = 5000;
+
+// Build the health-check URL for a server node from its config. Scheme is https
+// only for the conventional 443 port, http otherwise (local dev servers, etc.).
+function buildServerUrl(cfg: Record<string, any>): string {
+  const host = String(cfg.host ?? 'localhost').trim() || 'localhost';
+  const rawPort = cfg.port;
+  const port =
+    rawPort != null && rawPort !== '' && !Number.isNaN(Number(rawPort))
+      ? Number(rawPort)
+      : undefined;
+  let path = String(cfg.healthPath ?? '/').trim() || '/';
+  if (!path.startsWith('/')) path = '/' + path;
+  const scheme = port === 443 ? 'https' : 'http';
+  const authority = port != null ? `${host}:${port}` : host;
+  return `${scheme}://${authority}${path}`;
+}
 
 // Resolve an array of tag ids (referenced by an http node config) into
 // concrete key/value pairs using the project-level tag list. Unknown ids are
@@ -353,6 +384,53 @@ export async function executeNode(
       case 'puppeteer': {
         // Browser automation (placeholder - would need server-side implementation)
         return { nodeId: node.id, status: 'success', output: { type: 'puppeteer', message: 'Puppeteer execution requires server-side setup' } };
+      }
+
+      case 'server': {
+        // Health-check: probe the configured host:port[/healthPath]. We treat
+        // ANY HTTP response (even 4xx/5xx) as "reachable" — the port is open and
+        // something is serving. Only a network-level failure (refused / DNS /
+        // timeout) counts as unreachable. We never throw here so a server node
+        // in the middle of a chain can't break the run.
+        const cfg = node.config ?? {};
+        const url = buildServerUrl(cfg);
+        const started = Date.now();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
+        try {
+          // GET (not HEAD) — some dev servers / frameworks don't answer HEAD.
+          const response = await fetch(url, {
+            method: 'GET',
+            signal: controller.signal,
+            redirect: 'manual',
+          });
+          clearTimeout(timer);
+          const durationMs = Date.now() - started;
+          const server: ServerMeta = {
+            reachable: true,
+            url,
+            statusCode: response.status,
+            durationMs,
+          };
+          return {
+            nodeId: node.id,
+            status: 'success',
+            output: { type: 'server', reachable: true, statusCode: response.status, durationMs, url },
+            server,
+          };
+        } catch (e: any) {
+          clearTimeout(timer);
+          const durationMs = Date.now() - started;
+          const server: ServerMeta = { reachable: false, url, durationMs };
+          // reachable:false is a *successful* execution (we did the check) so a
+          // chain continues past it. The UI shows the red "unreachable" badge.
+          return {
+            nodeId: node.id,
+            status: 'success',
+            output: { type: 'server', reachable: false, durationMs, url },
+            server,
+          };
+        }
       }
 
       default:

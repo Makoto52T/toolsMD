@@ -2,12 +2,14 @@
 
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { metaFor } from './nodeMeta';
+import { nodeDisplayMeta } from './nodeMeta';
 
 export interface FlowNodeData {
   name: string;
   type: string;
   description?: string;
+  // Node config — used by server nodes to pick icon/colour + show framework/port.
+  config?: Record<string, any>;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onExecute: (id: string) => void;
@@ -15,7 +17,12 @@ export interface FlowNodeData {
 }
 
 function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
-  const meta = metaFor(data.type);
+  const meta = nodeDisplayMeta(data.type, data.config);
+  const isServer = data.type === 'server';
+  const cfg = data.config ?? {};
+  const framework: string = isServer ? String(cfg.framework ?? '') : '';
+  const port = isServer && cfg.port != null && cfg.port !== '' ? String(cfg.port) : '';
+  const runLabel = isServer ? '▶ Ping' : '▶ Run';
 
   return (
     <div
@@ -47,6 +54,24 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
         </div>
       </div>
 
+      {isServer && (framework || port) ? (
+        <div className="flex flex-wrap items-center gap-1 px-3 pt-2">
+          {framework ? (
+            <span
+              className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white"
+              style={{ background: meta.color }}
+            >
+              {framework}
+            </span>
+          ) : null}
+          {port ? (
+            <span className="rounded-md bg-[var(--color-neutral-100)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--color-neutral-600)]">
+              :{port}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
       {data.description ? (
         <div className="px-3 pt-1.5 text-xs text-[var(--color-neutral-500)] line-clamp-2">
           {data.description}
@@ -60,11 +85,11 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             data.onExecute(id);
           }}
           disabled={data.executing}
-          title="Execute this node"
+          title={isServer ? 'Health-check this server' : 'Execute this node'}
           className="nodrag flex-1 rounded-md py-1 text-xs font-medium text-white transition-colors disabled:opacity-60"
           style={{ background: meta.color }}
         >
-          {data.executing ? '…' : '▶ Run'}
+          {data.executing ? '…' : runLabel}
         </button>
         <button
           onClick={(e) => {

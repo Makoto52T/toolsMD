@@ -17,6 +17,14 @@ export interface ExecHttpMeta {
   durationMs: number;
 }
 
+// Mirrors lib/node-executor.ts ServerMeta (health-check result).
+export interface ExecServerMeta {
+  reachable: boolean;
+  url: string;
+  statusCode?: number;
+  durationMs: number;
+}
+
 export interface ExecResult {
   nodeId: string;
   nodeName?: string;
@@ -25,6 +33,7 @@ export interface ExecResult {
   output?: any;
   error?: string;
   http?: ExecHttpMeta;
+  server?: ExecServerMeta;
 }
 
 export interface MissingBinding {
@@ -279,6 +288,7 @@ function ResultCard({
   onBind: (req: BindRequest) => void;
 }) {
   const http = result.http;
+  const server = result.server;
   const ok = result.status === 'success';
   return (
     <div className="rounded-xl border border-[var(--color-neutral-200)] bg-white">
@@ -296,10 +306,51 @@ function ResultCard({
           {http ? (
             <span className="text-xs text-[var(--color-neutral-500)]">{http.durationMs} ms</span>
           ) : null}
-          <StatusBadge result={result} />
+          {server ? (
+            <span className="text-xs text-[var(--color-neutral-500)]">{server.durationMs} ms</span>
+          ) : null}
+          {server ? (
+            <span
+              data-testid="server-reachable-badge"
+              className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
+              style={{
+                background: server.reachable
+                  ? 'var(--color-success)'
+                  : 'var(--color-danger)',
+              }}
+            >
+              {server.reachable ? '● Reachable' : '○ Unreachable'}
+            </span>
+          ) : (
+            <StatusBadge result={result} />
+          )}
         </div>
       </div>
 
+      {/* Server health-check detail (distinct from an http response body) */}
+      {server ? (
+        <div className="flex flex-col gap-1 px-4 py-3" data-testid="server-result">
+          <div className="truncate text-xs text-[var(--color-neutral-500)]">
+            <span className="font-mono font-semibold text-[var(--color-neutral-700)]">GET</span>{' '}
+            <span className="font-mono">{server.url}</span>
+          </div>
+          <div className="text-sm">
+            {server.reachable ? (
+              <span className="text-[var(--color-success)]">
+                Server responded
+                {server.statusCode != null ? ` (HTTP ${server.statusCode})` : ''} in{' '}
+                {server.durationMs} ms
+              </span>
+            ) : (
+              <span className="text-[var(--color-danger)]">
+                No response — port closed, host unreachable, or timed out ({server.durationMs} ms)
+              </span>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {server ? null : (
       <div className="flex flex-col gap-3 px-4 py-3">
         {/* Request line for http nodes */}
         {http?.request ? (
@@ -365,6 +416,7 @@ function ResultCard({
           </details>
         ) : null}
       </div>
+      )}
     </div>
   );
 }

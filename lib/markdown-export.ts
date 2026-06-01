@@ -37,6 +37,25 @@ export function generateProjectMarkdown(project: Project): string {
     });
   }
 
+  // Infrastructure section — server nodes (frontend/backend processes).
+  const serverNodes = project.nodes.filter((n) => n.type === 'server');
+  if (serverNodes.length > 0) {
+    lines.push(`## Infrastructure\n`);
+    lines.push(`| Server | Category | Stack | Port |`);
+    lines.push(`| --- | --- | --- | --- |`);
+    serverNodes.forEach((n) => {
+      const cfg = (n.config ?? {}) as Record<string, any>;
+      const category = cfg.category === 'frontend' ? 'Frontend' : 'Backend';
+      const stack = [cfg.language, cfg.framework]
+        .filter((x) => x != null && String(x).trim() !== '')
+        .join(' / ') || '—';
+      const port =
+        cfg.port != null && String(cfg.port).trim() !== '' ? String(cfg.port) : '—';
+      lines.push(`| ${n.name} | ${category} | ${stack} | ${port} |`);
+    });
+    lines.push('');
+  }
+
   // Edges section
   if (project.edges.length > 0) {
     lines.push(`## Data Flow\n`);
