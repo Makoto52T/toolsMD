@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, use } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ReactFlow, {
@@ -221,23 +221,62 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     }
   };
 
-  // ---- React Flow mapping ----
-  const rfNodes: RFNode<FlowNodeData>[] = useMemo(
-    () =>
-      nodes.map((n) => ({
-        id: n.id,
-        type: 'tmd',
-        position: { x: n.positionX, y: n.positionY },
-        data: {
-          name: n.name,
-          type: n.type,
-          description: n.description,
-          onEdit: (nid: string) => setEditingNode(nodes.find((x) => x.id === nid) ?? null),
-          onDelete: (nid: string) => setDeleteTarget(nodes.find((x) => x.id === nid) ?? null),
-        },
-      })),
-    [nodes],
+  // ---- React Flow nodes ----
+  // React Flow owns measured dimensions / internal state on each node object.
+  // We keep an *independent* RFNode[] state (not a useMemo derived from `nodes`)
+  // so that the `dimensions` changes React Flow emits via onNodesChange are
+  // preserved across renders. Rebuilding the array from ApiNode[] every render
+  // wipes those measurements and leaves freshly-added nodes stuck at
+  // `visibility:hidden` forever (they never get marked as measured).
+  const [rfNodes, setRfNodes] = useState<RFNode<FlowNodeData>[]>([]);
+  const rfNodesRef = useRef<RFNode<FlowNodeData>[]>(rfNodes);
+  rfNodesRef.current = rfNodes;
+
+  // Keep the latest ApiNode list in a ref so node-data callbacks always resolve
+  // against current state without re-subscribing.
+  const nodesRef = useRef<ApiNode[]>(nodes);
+  nodesRef.current = nodes;
+
+  const buildData = useCallback(
+    (n: ApiNode): FlowNodeData => ({
+      name: n.name,
+      type: n.type,
+      description: n.description,
+      onEdit: (nid: string) => setEditingNode(nodesRef.current.find((x) => x.id === nid) ?? null),
+      onDelete: (nid: string) =>
+        setDeleteTarget(nodesRef.current.find((x) => x.id === nid) ?? null),
+    }),
+    [],
   );
+
+  // Reconcile RFNode[] with the source-of-truth ApiNode[] WITHOUT discarding the
+  // per-node internals React Flow attached (width/height/handleBounds/etc).
+  // - existing node  -> keep the RFNode object, refresh position + data only
+  // - new node       -> append a fresh RFNode (React Flow will measure it)
+  // - removed node   -> drop it
+  useEffect(() => {
+    setRfNodes((prev) => {
+      const prevById = new Map(prev.map((r) => [r.id, r]));
+      const reconciled = nodes.map((n) => {
+        const existing = prevById.get(n.id);
+        if (existing) {
+          return {
+            ...existing,
+            position: { x: n.positionX, y: n.positionY },
+            data: buildData(n),
+          };
+        }
+        return {
+          id: n.id,
+          type: 'tmd',
+          position: { x: n.positionX, y: n.positionY },
+          data: buildData(n),
+        };
+      });
+      rfNodesRef.current = reconciled;
+      return reconciled;
+    });
+  }, [nodes, buildData]);
 
   const rfEdges: RFEdge[] = useMemo(
     () =>
@@ -256,31 +295,35 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      setNodes((prev) => {
-        const rf = applyNodeChanges(
-          changes,
-          prev.map((n) => ({
-            id: n.id,
-            type: 'tmd',
-            position: { x: n.positionX, y: n.positionY },
-            data: { name: n.name, type: n.type } as FlowNodeData,
-          })),
-        );
-        const posById = new Map(rf.map((r) => [r.id, r.position]));
-        return prev.map((n) => {
-          const p = posById.get(n.id);
-          return p ? { ...n, positionX: p.x, positionY: p.y } : n;
-        });
-      });
-      changes.forEach((c) => {
-        if (c.type === 'position' && c.dragging === false) {
-          setNodes((prev) => {
-            const node = prev.find((n) => n.id === c.id);
-            if (node) persistPosition(node);
-            return prev;
+      // Apply ALL changes (including `dimensions`, which mark a node as measured
+      // and flip it from visibility:hidden to visible) directly onto the RFNode
+      // state React Flow controls.
+      const applied = applyNodeChanges(changes, rfNodesRef.current);
+      rfNodesRef.current = applied;
+      setRfNodes(applied);
+
+      // Mirror finished drags back into the ApiNode source-of-truth + persist.
+      // The drag-stop change does not always carry a `position`, so read the
+      // canonical position out of the applied RFNode array instead of `c.position`.
+      const dragStopIds = changes
+        .filter((c) => c.type === 'position' && c.dragging === false)
+        .map((c) => (c as { id: string }).id);
+      if (dragStopIds.length > 0) {
+        const posById = new Map(applied.map((r) => [r.id, r.position]));
+        setNodes((prevApi) => {
+          const moved: ApiNode[] = [];
+          const updated = prevApi.map((n) => {
+            if (!dragStopIds.includes(n.id)) return n;
+            const p = posById.get(n.id);
+            if (!p) return n;
+            const m = { ...n, positionX: p.x, positionY: p.y };
+            moved.push(m);
+            return m;
           });
-        }
-      });
+          moved.forEach(persistPosition);
+          return updated;
+        });
+      }
     },
     [persistPosition],
   );
