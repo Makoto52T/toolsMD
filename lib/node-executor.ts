@@ -1,4 +1,4 @@
-import { Node as PlannerNode, Edge } from './store';
+import { Node as PlannerNode, Edge, Tag } from './store';
 
 export interface ExecutionResult {
   nodeId: string;
@@ -7,9 +7,24 @@ export interface ExecutionResult {
   error?: string;
 }
 
+// Resolve an array of tag ids (referenced by an http node config) into
+// concrete key/value pairs using the project-level tag list. Unknown ids are
+// silently skipped (a tag may have been deleted after the node referenced it).
+function resolveTags(tagIds: unknown, tags: Tag[]): Tag[] {
+  if (!Array.isArray(tagIds)) return [];
+  const byId = new Map(tags.map((t) => [t.id, t]));
+  const out: Tag[] = [];
+  for (const id of tagIds) {
+    const t = byId.get(id as string);
+    if (t) out.push(t);
+  }
+  return out;
+}
+
 export async function executeNode(
   node: PlannerNode,
-  inputs: Record<string, any>
+  inputs: Record<string, any>,
+  tags: Tag[] = []
 ): Promise<ExecutionResult> {
   try {
     switch (node.type) {
@@ -31,17 +46,67 @@ export async function executeNode(
 
       case 'http-request': {
         // Make HTTP request
-        const { url, method = 'GET', headers = {}, body } = node.config;
+        const {
+          url,
+          method = 'GET',
+          headers = {},
+          body,
+          applyTagQuery = false,
+          tagQuery,
+          applyTagBody = false,
+          tagBody,
+        } = node.config;
 
         if (!url) {
           return { nodeId: node.id, status: 'error', error: 'No URL provided' };
         }
 
+        const httpMethod = String(method).toUpperCase();
+
+        // ---- Apply tagQuery: append resolved tags as query string params ----
+        let finalUrl = String(url);
+        if (applyTagQuery) {
+          const qTags = resolveTags(tagQuery, tags);
+          if (qTags.length > 0) {
+            try {
+              // Preserve any existing query already present on the url.
+              const u = new URL(finalUrl);
+              for (const t of qTags) u.searchParams.set(t.key, t.value);
+              finalUrl = u.toString();
+            } catch {
+              // Relative / malformed url: fall back to manual query concat so we
+              // still honour the configured tags rather than dropping them.
+              const sp = new URLSearchParams();
+              for (const t of qTags) sp.set(t.key, t.value);
+              finalUrl += (finalUrl.includes('?') ? '&' : '?') + sp.toString();
+            }
+          }
+        }
+
+        // ---- Build request body, merging tagBody (ignored for GET) ----
+        // GET requests have no body, so tagBody is intentionally ignored.
+        let finalBody: any = body;
+        if (applyTagBody && httpMethod !== 'GET') {
+          const bTags = resolveTags(tagBody, tags);
+          if (bTags.length > 0) {
+            const base =
+              body && typeof body === 'object' && !Array.isArray(body) ? { ...body } : {};
+            for (const t of bTags) {
+              // Don't clobber keys the user typed explicitly into the body.
+              if (!(t.key in base)) base[t.key] = t.value;
+            }
+            finalBody = base;
+          }
+        }
+
         try {
-          const response = await fetch(url, {
-            method,
+          const response = await fetch(finalUrl, {
+            method: httpMethod,
             headers: { 'Content-Type': 'application/json', ...headers },
-            body: body ? JSON.stringify(body) : undefined,
+            body:
+              httpMethod !== 'GET' && httpMethod !== 'HEAD' && finalBody
+                ? JSON.stringify(finalBody)
+                : undefined,
           });
 
           const data = await response.json();
@@ -115,7 +180,8 @@ export function getExecutionOrder(nodes: PlannerNode[], edges: Edge[]): string[]
 
 export async function executeWorkflow(
   nodes: PlannerNode[],
-  edges: Edge[]
+  edges: Edge[],
+  tags: Tag[] = []
 ): Promise<ExecutionResult[]> {
   const results: ExecutionResult[] = [];
   const outputs = new Map<string, any>();
@@ -125,7 +191,7 @@ export async function executeWorkflow(
     const node = nodes.find((n) => n.id === nodeId)!;
     const inputs = getNodeInputs(nodeId, edges, outputs);
 
-    const result = await executeNode(node, inputs);
+    const result = await executeNode(node, inputs, tags);
     results.push(result);
 
     if (result.status === 'success') {

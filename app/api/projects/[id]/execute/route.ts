@@ -15,6 +15,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const results = await executeWorkflow(project.nodes, project.edges);
+  const results = await executeWorkflow(project.nodes, project.edges, project.tags);
   return NextResponse.json({ results });
 }

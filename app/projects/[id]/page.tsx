@@ -23,6 +23,7 @@ import { FullPageSpinner } from '@/components/LoadingSpinner';
 import { useToast } from '@/components/Toast';
 import { FlowNode, FlowNodeData } from '@/components/canvas/FlowNode';
 import { NODE_TYPES, metaFor } from '@/components/canvas/nodeMeta';
+import { TagsPanel, type Tag } from '@/components/canvas/TagsPanel';
 
 interface Project {
   id: string;
@@ -53,6 +54,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [project, setProject] = useState<Project | null>(null);
   const [nodes, setNodes] = useState<ApiNode[]>([]);
   const [edges, setEdges] = useState<ApiEdge[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -80,7 +82,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         router.push('/dashboard');
         return;
       }
-      setProject(await projRes.json());
+      const projData = await projRes.json();
+      setProject(projData);
+      if (Array.isArray(projData.tags)) setTags(projData.tags);
       if (nodesRes.ok) setNodes(await nodesRes.json());
       if (edgesRes.ok) setEdges(await edgesRes.json());
     } catch {
@@ -220,6 +224,44 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       setExecuting(false);
     }
   };
+
+  // ---- Tags ----
+  // Persist the whole tag array (atomic replace). The PUT response returns the
+  // server-canonical tags (with real ids assigned to newly-added rows), so we
+  // adopt that back into state — keeps reference ids stable for node configs.
+  const tagSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistTags = useCallback(
+    (next: Tag[]) => {
+      if (tagSaveTimer.current) clearTimeout(tagSaveTimer.current);
+      tagSaveTimer.current = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/projects/${id}/tags`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tags: next }),
+          });
+          if (res.ok) {
+            const saved: Tag[] = await res.json();
+            setTags(saved);
+          } else {
+            const err = await res.json().catch(() => ({}));
+            toast.error(err.error || 'Failed to save tags');
+          }
+        } catch {
+          toast.error('Network error saving tags');
+        }
+      }, 400);
+    },
+    [id, toast],
+  );
+
+  const onTagsChange = useCallback(
+    (next: Tag[]) => {
+      setTags(next);
+      persistTags(next);
+    },
+    [persistTags],
+  );
 
   // ---- React Flow nodes ----
   // React Flow owns measured dimensions / internal state on each node object.
@@ -430,6 +472,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </p>
           </div>
         )}
+
+        <TagsPanel tags={tags} isMobile={isMobile} onChange={onTagsChange} />
       </div>
 
       {/* Edit Node modal */}
@@ -488,6 +532,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 ))}
               </select>
             </div>
+
+            {editingNode.type === 'http-request' && (
+              <HttpNodeFields node={editingNode} tags={tags} onChange={setEditingNode} />
+            )}
           </div>
         )}
       </Modal>
@@ -525,6 +573,219 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         onConfirm={doDeleteNode}
         onCancel={() => setDeleteTarget(null)}
       />
+    </div>
+  );
+}
+
+// ---------- HTTP node config fields (Edit Node modal) ----------
+function HttpNodeFields({
+  node,
+  tags,
+  onChange,
+}: {
+  node: ApiNode;
+  tags: Tag[];
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  const method = String(cfg.method ?? 'GET').toUpperCase();
+  const url = String(cfg.url ?? '');
+  const applyTagQuery = !!cfg.applyTagQuery;
+  const applyTagBody = !!cfg.applyTagBody;
+  const tagQuery: string[] = Array.isArray(cfg.tagQuery) ? cfg.tagQuery : [];
+  const tagBody: string[] = Array.isArray(cfg.tagBody) ? cfg.tagBody : [];
+  const isGet = method === 'GET';
+
+  // headers / body are edited as raw JSON text; keep them stringified for the box.
+  const headersText =
+    cfg.headers != null ? JSON.stringify(cfg.headers, null, 2) : '';
+  const bodyText = cfg.body != null ? JSON.stringify(cfg.body, null, 2) : '';
+
+  const setCfg = (patch: Record<string, any>) =>
+    onChange({ ...node, config: { ...cfg, ...patch } });
+
+  const parseMaybeJson = (text: string): any => {
+    const t = text.trim();
+    if (!t) return undefined;
+    try {
+      return JSON.parse(t);
+    } catch {
+      return text; // keep raw; preview will reflect it
+    }
+  };
+
+  const toggleTagIn = (list: string[], id: string): string[] =>
+    list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+
+  const byId = new Map(tags.map((t) => [t.id, t]));
+
+  // ----- live preview -----
+  const previewUrl = (() => {
+    if (!url) return '(no url)';
+    const selected = applyTagQuery ? tagQuery.map((id) => byId.get(id)).filter(Boolean) : [];
+    if (selected.length === 0) return url;
+    const pairs = selected.map((t) => `${t!.key}=${'•'.repeat(Math.max(3, t!.value.length || 3))}`);
+    return url + (url.includes('?') ? '&' : '?') + pairs.join('&');
+  })();
+
+  const previewBody = (() => {
+    if (isGet) return null;
+    const base =
+      cfg.body && typeof cfg.body === 'object' && !Array.isArray(cfg.body) ? { ...cfg.body } : {};
+    if (applyTagBody) {
+      for (const id of tagBody) {
+        const t = byId.get(id);
+        if (t && !(t.key in base)) base[t.key] = '••••';
+      }
+    }
+    return Object.keys(base).length ? JSON.stringify(base, null, 2) : '(empty body)';
+  })();
+
+  return (
+    <div className="flex flex-col gap-4 rounded-lg border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] p-3">
+      <p className="text-xs font-bold uppercase tracking-wide text-[var(--color-neutral-500)]">
+        HTTP Request
+      </p>
+
+      <div className="grid grid-cols-[110px_1fr] gap-2">
+        <select
+          value={method}
+          data-testid="http-method"
+          onChange={(e) => setCfg({ method: e.target.value })}
+          className="rounded-lg border border-[var(--color-neutral-300)] px-2 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+        >
+          {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="https://api.example.com/endpoint"
+          value={url}
+          data-testid="http-url"
+          onChange={(e) => setCfg({ url: e.target.value })}
+          className="rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-600)]">
+          Headers (JSON)
+        </label>
+        <textarea
+          rows={2}
+          placeholder='{ "Authorization": "Bearer ..." }'
+          defaultValue={headersText}
+          data-testid="http-headers"
+          onBlur={(e) => setCfg({ headers: parseMaybeJson(e.target.value) })}
+          className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+        />
+      </div>
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-600)]">
+          Body (JSON){isGet ? ' — ignored for GET' : ''}
+        </label>
+        <textarea
+          rows={3}
+          placeholder='{ "hello": "world" }'
+          defaultValue={bodyText}
+          data-testid="http-body"
+          disabled={isGet}
+          onBlur={(e) => setCfg({ body: parseMaybeJson(e.target.value) })}
+          className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none disabled:opacity-50"
+        />
+      </div>
+
+      {/* Apply Tags — query */}
+      <div>
+        <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-neutral-700)]">
+          <input
+            type="checkbox"
+            checked={applyTagQuery}
+            data-testid="apply-tag-query"
+            onChange={(e) => setCfg({ applyTagQuery: e.target.checked })}
+          />
+          Apply Tags to query string
+        </label>
+        {applyTagQuery && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {tags.length === 0 && (
+              <span className="text-xs text-[var(--color-neutral-400)]">No tags defined yet.</span>
+            )}
+            {tags.map((t) => (
+              <label
+                key={t.id}
+                className="flex items-center gap-1 rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-1 text-xs"
+              >
+                <input
+                  type="checkbox"
+                  checked={tagQuery.includes(t.id)}
+                  onChange={() => setCfg({ tagQuery: toggleTagIn(tagQuery, t.id) })}
+                />
+                {t.key}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Apply Tags — body */}
+      <div>
+        <label className="flex items-center gap-2 text-sm font-medium text-[var(--color-neutral-700)]">
+          <input
+            type="checkbox"
+            checked={applyTagBody}
+            data-testid="apply-tag-body"
+            disabled={isGet}
+            onChange={(e) => setCfg({ applyTagBody: e.target.checked })}
+          />
+          Apply Tags to body{isGet ? ' (disabled for GET)' : ''}
+        </label>
+        {applyTagBody && !isGet && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {tags.length === 0 && (
+              <span className="text-xs text-[var(--color-neutral-400)]">No tags defined yet.</span>
+            )}
+            {tags.map((t) => (
+              <label
+                key={t.id}
+                className="flex items-center gap-1 rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-1 text-xs"
+              >
+                <input
+                  type="checkbox"
+                  checked={tagBody.includes(t.id)}
+                  onChange={() => setCfg({ tagBody: toggleTagIn(tagBody, t.id) })}
+                />
+                {t.key}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {applyTagBody && isGet && (
+        <p className="text-xs text-[var(--color-warning)]">
+          ⚠️ GET requests have no body — tag body injection will be ignored on execute.
+        </p>
+      )}
+
+      {/* Live preview */}
+      <div data-testid="http-preview" className="rounded-lg bg-[var(--color-neutral-900)] p-3">
+        <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+          Preview
+        </p>
+        <code className="block break-all font-mono text-xs text-[var(--color-neutral-100)]">
+          {method} {previewUrl}
+        </code>
+        {previewBody !== null && (
+          <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-[var(--color-neutral-300)]">
+            {previewBody}
+          </pre>
+        )}
+      </div>
     </div>
   );
 }

@@ -21,11 +21,18 @@ export interface Edge {
   label: string;
 }
 
+export interface Tag {
+  id: string;
+  key: string;
+  value: string;
+}
+
 export interface Project {
   id: string;
   userId: string;
   name: string;
   description: string;
+  tags: Tag[];
   nodes: Node[];
   edges: Edge[];
   createdAt: Date;
@@ -52,6 +59,28 @@ function parseConfig(raw: unknown): Record<string, any> {
   }
   if (typeof raw === 'object') return raw as Record<string, any>;
   return {};
+}
+
+function parseTags(raw: unknown): Tag[] {
+  let val: unknown = raw;
+  if (val == null) return [];
+  if (typeof val === 'string') {
+    try {
+      val = JSON.parse(val);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(val)) return [];
+  return val
+    .filter(
+      (t): t is Tag =>
+        t != null &&
+        typeof t === 'object' &&
+        typeof (t as any).id === 'string' &&
+        typeof (t as any).key === 'string'
+    )
+    .map((t) => ({ id: t.id, key: t.key, value: String((t as any).value ?? '') }));
 }
 
 function mapNode(r: RowDataPacket): Node {
@@ -89,6 +118,7 @@ async function loadProjectRow(r: RowDataPacket): Promise<Project> {
     userId: r.user_id,
     name: r.name,
     description: r.description ?? '',
+    tags: parseTags(r.tags),
     nodes: nodeRows.map(mapNode),
     edges: edgeRows.map(mapEdge),
     createdAt: new Date(r.created_at),
@@ -183,6 +213,17 @@ export const store = {
       [name, description, id]
     );
     if (res.affectedRows === 0) return null;
+    const project = await store.getProject(id);
+    return project ?? null;
+  },
+
+  updateProjectTags: async (id: string, tags: Tag[]): Promise<Project | null> => {
+    const [res] = await pool.execute<any>(
+      'UPDATE projects SET tags = ? WHERE id = ?',
+      [JSON.stringify(tags), id]
+    );
+    if (res.affectedRows === 0) return null;
+    await touchProject(id);
     const project = await store.getProject(id);
     return project ?? null;
   },
