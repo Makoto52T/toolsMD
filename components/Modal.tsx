@@ -9,6 +9,10 @@ interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  // When false, the modal can only be closed via the X button or an explicit
+  // action in the footer (e.g. Cancel) — backdrop click and Esc are disabled.
+  // Used for long config forms (node edit) to prevent accidental dismissal.
+  dismissable?: boolean;
 }
 
 const sizeMap = {
@@ -18,11 +22,19 @@ const sizeMap = {
   xl: 'max-w-4xl',
 };
 
-export function Modal({ open, onClose, title, children, footer, size = 'md' }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  size = 'md',
+  dismissable = true,
+}: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (dismissable && e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
@@ -30,14 +42,14 @@ export function Modal({ open, onClose, title, children, footer, size = 'md' }: M
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
     };
-  }, [open, onClose]);
+  }, [open, onClose, dismissable]);
 
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 ds-animate-fade-in sm:items-center sm:p-4"
-      onClick={onClose}
+      onClick={dismissable ? onClose : undefined}
     >
       <div
         className={[

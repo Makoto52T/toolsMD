@@ -68,13 +68,17 @@ export function TagsPanel({
   // tagId -> list of "{node}·{path}" sources that auto-write this tag.
   autoInfo?: Record<string, string[]>;
 }) {
-  const [open, setOpen] = useState(false);
+  // Mobile only: the panel is a collapsible overlay (narrow screens can't fit a
+  // pinned column). On desktop the panel is always pinned — there is no toggle.
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftKey, setDraftKey] = useState('');
   const [draftValue, setDraftValue] = useState('');
   // null = "auto" (use detected type); a TagType = manual override.
   const [draftType, setDraftType] = useState<TagType | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Filter box: matches against key, value, or type (case-insensitive).
+  const [filter, setFilter] = useState('');
 
   const detectedType = detectTagType(draftValue);
   const effectiveType: TagType = draftType ?? detectedType;
@@ -138,20 +142,18 @@ export function TagsPanel({
     if (editingId === id) resetForm();
   };
 
-  // Closed state: a small tab pinned to the left edge.
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label="Open tags panel"
-        data-testid="tags-tab"
-        className="absolute left-0 top-1/2 z-20 -translate-y-1/2 rounded-r-lg border border-l-0 border-[var(--color-neutral-200)] bg-white px-2 py-3 text-lg shadow-md hover:bg-[var(--color-neutral-50)]"
-      >
-        🏷️
-      </button>
-    );
-  }
+  // Filtered view: match the query against key, value, or type label.
+  const q = filter.trim().toLowerCase();
+  const visibleTags = q
+    ? tags.filter((t) => {
+        const typeLabel = (TAG_TYPE_META[t.type ?? 'generic'] ?? TAG_TYPE_META.generic).label;
+        return (
+          t.key.toLowerCase().includes(q) ||
+          t.value.toLowerCase().includes(q) ||
+          typeLabel.toLowerCase().includes(q)
+        );
+      })
+    : tags;
 
   const form =
     editingId !== null ? (
@@ -233,18 +235,48 @@ export function TagsPanel({
     <>
       <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] px-4 py-3">
         <h2 className="text-sm font-bold text-[var(--color-neutral-900)]">🏷️ Tags</h2>
-        <button
-          type="button"
-          onClick={() => {
-            resetForm();
-            setOpen(false);
-          }}
-          aria-label="Close tags panel"
-          data-testid="tags-close"
-          className="rounded-lg p-1 text-[var(--color-neutral-500)] hover:bg-[var(--color-neutral-100)]"
-        >
-          ✕
-        </button>
+        {/* Close button exists only on mobile (overlay). Desktop is pinned. */}
+        {isMobile ? (
+          <button
+            type="button"
+            onClick={() => {
+              resetForm();
+              setMobileOpen(false);
+            }}
+            aria-label="Close tags panel"
+            data-testid="tags-close"
+            className="rounded-lg p-1 text-[var(--color-neutral-500)] hover:bg-[var(--color-neutral-100)]"
+          >
+            ✕
+          </button>
+        ) : null}
+      </div>
+      {/* Filter box — gates the list below by key / value / type. */}
+      <div className="border-b border-[var(--color-neutral-200)] px-4 py-2.5">
+        <div className="relative">
+          <input
+            type="text"
+            value={filter}
+            data-testid="tag-filter"
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Filter tags…"
+            className="w-full rounded-md border border-[var(--color-neutral-300)] py-1.5 pl-7 pr-7 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+          />
+          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-[var(--color-neutral-400)]">
+            🔍
+          </span>
+          {filter ? (
+            <button
+              type="button"
+              onClick={() => setFilter('')}
+              aria-label="Clear filter"
+              data-testid="tag-filter-clear"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-xs text-[var(--color-neutral-400)] hover:text-[var(--color-neutral-700)]"
+            >
+              ✕
+            </button>
+          ) : null}
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-3">
         <p className="mb-2 text-xs text-[var(--color-neutral-400)]">
@@ -253,9 +285,16 @@ export function TagsPanel({
         </p>
         {tags.length === 0 ? (
           <p className="py-4 text-center text-xs text-[var(--color-neutral-400)]">No tags yet.</p>
+        ) : visibleTags.length === 0 ? (
+          <p
+            data-testid="tag-filter-empty"
+            className="py-4 text-center text-xs text-[var(--color-neutral-400)]"
+          >
+            No tags match “{filter}”.
+          </p>
         ) : (
           <div className="flex flex-col gap-1.5">
-            {tags.map((t) => (
+            {visibleTags.map((t) => (
               <div
                 key={t.id}
                 data-testid="tag-row"
@@ -316,16 +355,34 @@ export function TagsPanel({
     </>
   );
 
-  // Mobile: full-screen overlay (User Rule #4 — modals over drag gestures).
+  // Mobile: collapsible full-screen overlay (User Rule #4). A launcher tab on
+  // the left edge opens it; closed by default to keep the canvas usable.
   if (isMobile) {
+    if (!mobileOpen) {
+      return (
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open tags panel"
+          data-testid="tags-tab"
+          className="absolute left-0 top-1/2 z-20 -translate-y-1/2 rounded-r-lg border border-l-0 border-[var(--color-neutral-200)] bg-white px-2 py-3 text-lg shadow-md hover:bg-[var(--color-neutral-50)]"
+        >
+          🏷️
+        </button>
+      );
+    }
     return (
       <div className="absolute inset-0 z-30 flex flex-col bg-white">{panelBody}</div>
     );
   }
 
-  // Desktop: slide panel pinned to the left, overlaying the canvas.
+  // Desktop: pinned left column, always visible (no toggle). Rendered in-flow as
+  // a flex child of the 3-panel layout.
   return (
-    <div className="absolute left-0 top-0 z-30 flex h-full w-72 flex-col border-r border-[var(--color-neutral-200)] bg-white shadow-xl">
+    <div
+      data-testid="tags-panel"
+      className="flex h-full w-72 shrink-0 flex-col border-r border-[var(--color-neutral-200)] bg-white"
+    >
       {panelBody}
     </div>
   );

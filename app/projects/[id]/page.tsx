@@ -95,6 +95,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   } | null>(null);
   // Per-node spinner state (single-node execute).
   const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
+  // Desktop output column collapse (default expanded).
+  const [outputCollapsed, setOutputCollapsed] = useState(false);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -102,6 +104,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
+
+  // Auto-expand the desktop output column whenever a new result arrives, so a
+  // collapsed panel doesn't silently swallow the result the user just ran.
+  useEffect(() => {
+    if (execPanel !== null) setOutputCollapsed(false);
+  }, [execPanel]);
 
   const loadData = useCallback(async () => {
     try {
@@ -687,69 +695,102 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         </div>
       </div>
 
-      {/* Canvas / Mobile list */}
-      <div className="relative flex-1 overflow-hidden">
-        {isMobile ? (
-          <MobileNodeList
-            nodes={nodes}
-            edges={edges}
-            onEdit={(n) => setEditingNode(n)}
-            onDelete={(n) => setDeleteTarget(n)}
-            onConnect={createEdge}
-            onDeleteEdge={deleteEdge}
-            onExecute={(n) => executeOne(n.id)}
-            runningNodeId={runningNodeId}
+      {/* 3-panel layout: [Tags left · pinned] [Canvas center · flex-1] [Output right · pinned].
+          On mobile both side panels collapse to overlays (User Rule #4). */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Desktop: pinned left tags column. */}
+        {!isMobile && (
+          <TagsPanel
+            tags={tags}
+            isMobile={false}
+            onChange={onTagsChange}
+            autoInfo={tagAutoInfo}
           />
-        ) : (
-          <ReactFlow
-            nodes={rfNodes}
-            edges={rfEdges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            connectionMode={ConnectionMode.Loose}
-            onNodesChange={onNodesChange}
-            onConnect={onConnect}
-            onEdgesDelete={onEdgesDelete}
-            fitView
-            minZoom={0.2}
-            maxZoom={2}
-            proOptions={{ hideAttribution: true }}
-            deleteKeyCode={['Backspace', 'Delete']}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd5e1" />
-            <Controls showInteractive={false} />
-            <MiniMap
-              pannable
-              zoomable
-              nodeColor={(n) => metaFor((n.data as FlowNodeData)?.type ?? '').color}
-              className="!hidden sm:!block"
+        )}
+
+        {/* Canvas / Mobile list */}
+        <div className="relative flex-1 overflow-hidden">
+          {isMobile ? (
+            <MobileNodeList
+              nodes={nodes}
+              edges={edges}
+              onEdit={(n) => setEditingNode(n)}
+              onDelete={(n) => setDeleteTarget(n)}
+              onConnect={createEdge}
+              onDeleteEdge={deleteEdge}
+              onExecute={(n) => executeOne(n.id)}
+              runningNodeId={runningNodeId}
             />
-          </ReactFlow>
-        )}
+          ) : (
+            <ReactFlow
+              nodes={rfNodes}
+              edges={rfEdges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              connectionMode={ConnectionMode.Loose}
+              onNodesChange={onNodesChange}
+              onConnect={onConnect}
+              onEdgesDelete={onEdgesDelete}
+              fitView
+              minZoom={0.2}
+              maxZoom={2}
+              proOptions={{ hideAttribution: true }}
+              deleteKeyCode={['Backspace', 'Delete']}
+            >
+              <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd5e1" />
+              <Controls showInteractive={false} />
+              <MiniMap
+                pannable
+                zoomable
+                nodeColor={(n) => metaFor((n.data as FlowNodeData)?.type ?? '').color}
+                className="!hidden sm:!block"
+              />
+            </ReactFlow>
+          )}
 
-        {nodes.length === 0 && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-            <div className="mb-3 text-4xl">🧩</div>
-            <p className="text-sm font-medium text-[var(--color-neutral-600)]">No nodes yet</p>
-            <p className="text-xs text-[var(--color-neutral-400)]">
-              Click “Add Node” to start building your workflow.
-            </p>
-          </div>
-        )}
+          {nodes.length === 0 && (
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+              <div className="mb-3 text-4xl">🧩</div>
+              <p className="text-sm font-medium text-[var(--color-neutral-600)]">No nodes yet</p>
+              <p className="text-xs text-[var(--color-neutral-400)]">
+                Click “Add Node” to start building your workflow.
+              </p>
+            </div>
+          )}
 
-        <TagsPanel
-          tags={tags}
-          isMobile={isMobile}
-          onChange={onTagsChange}
-          autoInfo={tagAutoInfo}
-        />
+          {/* Mobile: tags as a collapsible overlay inside the canvas region. */}
+          {isMobile && (
+            <TagsPanel
+              tags={tags}
+              isMobile
+              onChange={onTagsChange}
+              autoInfo={tagAutoInfo}
+            />
+          )}
+        </div>
+
+        {/* Desktop: pinned right output column (collapsible). */}
+        {!isMobile && (
+          <OutputColumn
+            collapsed={outputCollapsed}
+            onToggleCollapse={() => setOutputCollapsed((c) => !c)}
+            execPanel={execPanel}
+            onClear={() => setExecPanel(null)}
+            tags={tags}
+            bindingsByNode={bindingsByNode}
+            onBind={onBind}
+            onResolveMissing={onResolveMissing}
+          />
+        )}
       </div>
 
-      {/* Edit Node modal */}
+      {/* Edit Node modal — dismissable={false}: long config form, so it only
+          closes via the X button or the Cancel action (not backdrop / Esc). */}
       <Modal
         open={!!editingNode}
         onClose={() => setEditingNode(null)}
         title="Edit Node"
+        dismissable={false}
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setEditingNode(null)} disabled={saving}>
@@ -822,30 +863,32 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         )}
       </Modal>
 
-      {/* Execute result panel — n8n-style. On mobile the Modal renders as a
-          full-width bottom sheet (overlay), per the mobile-first rule. */}
-      <Modal
-        open={execPanel !== null}
-        onClose={() => setExecPanel(null)}
-        title={execPanel ? `Result · ${execPanel.title}` : 'Result'}
-        size="lg"
-        footer={
-          <div className="flex justify-end">
-            <Button variant="secondary" onClick={() => setExecPanel(null)}>
-              Close
-            </Button>
-          </div>
-        }
-      >
-        <ExecutionResultPanel
-          results={execPanel?.results ?? []}
-          tags={tags}
-          bindingsByNode={bindingsByNode}
-          missingBindings={execPanel?.missingBindings ?? []}
-          onBind={onBind}
-          onResolveMissing={onResolveMissing}
-        />
-      </Modal>
+      {/* Execute result — desktop shows it in the pinned right OutputColumn.
+          On mobile only, it renders as a full-width bottom-sheet Modal. */}
+      {isMobile && (
+        <Modal
+          open={execPanel !== null}
+          onClose={() => setExecPanel(null)}
+          title={execPanel ? `Result · ${execPanel.title}` : 'Result'}
+          size="lg"
+          footer={
+            <div className="flex justify-end">
+              <Button variant="secondary" onClick={() => setExecPanel(null)}>
+                Close
+              </Button>
+            </div>
+          }
+        >
+          <ExecutionResultPanel
+            results={execPanel?.results ?? []}
+            tags={tags}
+            bindingsByNode={bindingsByNode}
+            missingBindings={execPanel?.missingBindings ?? []}
+            onBind={onBind}
+            onResolveMissing={onResolveMissing}
+          />
+        </Modal>
+      )}
 
       {/* Delete node confirm */}
       <ConfirmDialog
@@ -861,6 +904,107 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         onConfirm={doDeleteNode}
         onCancel={() => setDeleteTarget(null)}
       />
+    </div>
+  );
+}
+
+// ---------- Output column (desktop, pinned right) ----------
+// Always-visible right panel that hosts execution results. Replaces the old
+// result modal on desktop. Collapsible to a thin rail; default expanded. Shows
+// an empty state until the first run.
+function OutputColumn({
+  collapsed,
+  onToggleCollapse,
+  execPanel,
+  onClear,
+  tags,
+  bindingsByNode,
+  onBind,
+  onResolveMissing,
+}: {
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+  execPanel: { title: string; results: ExecResult[]; missingBindings: MissingBinding[] } | null;
+  onClear: () => void;
+  tags: Tag[];
+  bindingsByNode: Record<string, NodeBinding[]>;
+  onBind: (req: BindRequest) => void;
+  onResolveMissing: (m: MissingBinding, action: 'drop' | 'keep') => void;
+}) {
+  // Collapsed: thin rail with a re-open button on the right edge.
+  if (collapsed) {
+    return (
+      <div className="flex h-full w-10 shrink-0 flex-col items-center border-l border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] py-3">
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-label="Expand output panel"
+          data-testid="output-expand"
+          className="rounded-lg p-1.5 text-lg hover:bg-[var(--color-neutral-100)]"
+          title="Output"
+        >
+          📤
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-testid="output-panel"
+      className="flex h-full w-96 shrink-0 flex-col border-l border-[var(--color-neutral-200)] bg-white"
+    >
+      <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] px-4 py-3">
+        <h2 className="truncate text-sm font-bold text-[var(--color-neutral-900)]">
+          📤 Output{execPanel ? ` · ${execPanel.title}` : ''}
+        </h2>
+        <div className="flex shrink-0 items-center gap-1">
+          {execPanel ? (
+            <button
+              type="button"
+              onClick={onClear}
+              data-testid="output-clear"
+              aria-label="Clear output"
+              className="rounded-lg px-2 py-1 text-xs text-[var(--color-neutral-500)] hover:bg-[var(--color-neutral-100)]"
+            >
+              Clear
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Collapse output panel"
+            data-testid="output-collapse"
+            className="rounded-lg p-1 text-[var(--color-neutral-500)] hover:bg-[var(--color-neutral-100)]"
+            title="Collapse"
+          >
+            ⟩
+          </button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 py-3">
+        {execPanel === null ? (
+          <div
+            data-testid="output-empty"
+            className="flex h-full flex-col items-center justify-center text-center"
+          >
+            <div className="mb-2 text-3xl">▶️</div>
+            <p className="text-sm font-medium text-[var(--color-neutral-600)]">No results yet</p>
+            <p className="mt-1 text-xs text-[var(--color-neutral-400)]">
+              Press Execute on a node or run the workflow to see results here.
+            </p>
+          </div>
+        ) : (
+          <ExecutionResultPanel
+            results={execPanel.results}
+            tags={tags}
+            bindingsByNode={bindingsByNode}
+            missingBindings={execPanel.missingBindings}
+            onBind={onBind}
+            onResolveMissing={onResolveMissing}
+          />
+        )}
+      </div>
     </div>
   );
 }
