@@ -20,6 +20,11 @@ export interface Edge {
   sourceNodeId: string;
   targetNodeId: string;
   label: string;
+  // React Flow handle ids (top/bottom/left/right) the edge was drawn from/to.
+  // Null for legacy edges created before per-handle connections existed; those
+  // fall back to React Flow's default handle on render (back-compat).
+  sourceHandle: string | null;
+  targetHandle: string | null;
 }
 
 export interface Tag {
@@ -114,6 +119,8 @@ function mapEdge(r: RowDataPacket): Edge {
     sourceNodeId: r.source_node_id,
     targetNodeId: r.target_node_id,
     label: r.label ?? '',
+    sourceHandle: r.source_handle ?? null,
+    targetHandle: r.target_handle ?? null,
   };
 }
 
@@ -335,7 +342,9 @@ export const store = {
     projectId: string,
     sourceNodeId: string,
     targetNodeId: string,
-    label: string
+    label: string,
+    sourceHandle: string | null = null,
+    targetHandle: string | null = null
   ): Promise<Edge | null> => {
     const [proj] = await pool.query<RowDataPacket[]>(
       'SELECT id FROM projects WHERE id = ? LIMIT 1',
@@ -355,12 +364,19 @@ export const store = {
 
     const id = randomUUID();
     await pool.execute(
-      `INSERT INTO edges (id, project_id, source_node_id, target_node_id, label)
-       VALUES (?, ?, ?, ?, ?)`,
-      [id, projectId, sourceNodeId, targetNodeId, label ?? '']
+      `INSERT INTO edges (id, project_id, source_node_id, target_node_id, label, source_handle, target_handle)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, projectId, sourceNodeId, targetNodeId, label ?? '', sourceHandle ?? null, targetHandle ?? null]
     );
     await touchProject(projectId);
-    return { id, sourceNodeId, targetNodeId, label: label ?? '' };
+    return {
+      id,
+      sourceNodeId,
+      targetNodeId,
+      label: label ?? '',
+      sourceHandle: sourceHandle ?? null,
+      targetHandle: targetHandle ?? null,
+    };
   },
 
   deleteEdge: async (projectId: string, edgeId: string): Promise<boolean> => {

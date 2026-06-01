@@ -66,6 +66,8 @@ interface ApiEdge {
   sourceNodeId: string;
   targetNodeId: string;
   label?: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
 }
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
@@ -208,12 +210,23 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // ---- Edges ----
   const createEdge = useCallback(
-    async (sourceNodeId: string, targetNodeId: string) => {
+    async (
+      sourceNodeId: string,
+      targetNodeId: string,
+      sourceHandle: string | null = null,
+      targetHandle: string | null = null,
+    ) => {
       try {
         const res = await fetch(`/api/projects/${id}/edges`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sourceNodeId, targetNodeId, label: '' }),
+          body: JSON.stringify({
+            sourceNodeId,
+            targetNodeId,
+            label: '',
+            sourceHandle,
+            targetHandle,
+          }),
         });
         if (res.ok) {
           const created: ApiEdge = await res.json();
@@ -563,6 +576,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         id: e.id,
         source: e.sourceNodeId,
         target: e.targetNodeId,
+        sourceHandle: e.sourceHandle ?? undefined,
+        targetHandle: e.targetHandle ?? undefined,
         label: e.label || undefined,
         type: 'deletable',
         animated: true,
@@ -613,7 +628,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const onConnect = useCallback(
     (conn: Connection) => {
       if (conn.source && conn.target && conn.source !== conn.target) {
-        void createEdge(conn.source, conn.target);
+        void createEdge(
+          conn.source,
+          conn.target,
+          conn.sourceHandle ?? null,
+          conn.targetHandle ?? null,
+        );
       }
     },
     [createEdge],
