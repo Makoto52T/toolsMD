@@ -136,9 +136,11 @@ function helloWorld() {
         y: 160,
         config: {
           code: [
-            '// `inputs` is the previous step output (the parsed JSON response).',
-            '// postman-echo returns { args: { hello: "world" }, ... }',
-            'const hello = inputs && inputs.args ? inputs.args.hello : undefined;',
+            '// `inputs` is keyed by each incoming edge LABEL. The edge from the',
+            '// HTTP node is labelled "response", so the parsed JSON body is at',
+            '// inputs.response. postman-echo returns { args: { hello: "world" }, ... }.',
+            'const res = inputs.response || {};',
+            'const hello = res.args ? res.args.hello : undefined;',
             'return { hello, message: "Hello, " + (hello || "there") + "!" };',
           ].join('\n'),
         },
@@ -174,9 +176,10 @@ function loginChain() {
             { key: 'username', value: '{{username}}', enabled: true },
             { key: 'password', value: '{{password}}', enabled: true },
           ],
-          // postman-echo echoes the posted form back under .form; bind a value
-          // from there into the token tag to demonstrate response→tag binding.
-          outputBindings: [{ path: 'form.username', tagId: t.token, tagKey: 'token' }],
+          // Form-mode bodies are sent as JSON, so postman-echo echoes them back
+          // under .data (not .form). Bind a value from there into the token tag
+          // to demonstrate response→tag binding (swap for your API's token path).
+          outputBindings: [{ path: 'data.username', tagId: t.token, tagKey: 'token' }],
         }),
       },
       {

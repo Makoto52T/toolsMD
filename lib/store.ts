@@ -279,13 +279,17 @@ export const store = {
       false
     );
 
-    // Re-id tags so the fork is fully independent of the source.
-    const clonedTags: Tag[] = source.tags.map((t) => ({
-      id: randomUUID(),
-      key: t.key,
-      value: t.value,
-      type: t.type,
-    }));
+    // Re-id tags so the fork is fully independent of the source. Keep a map
+    // oldTagId -> newTagId so node configs that reference tag ids (urlParts,
+    // urlTagId, outputBindings[].tagId) can be rewired to the cloned tags —
+    // otherwise those references dangle and the node fails at run time
+    // ("URL builder has no resolvable tags", bindings silently skipped).
+    const tagIdMap = new Map<string, string>();
+    const clonedTags: Tag[] = source.tags.map((t) => {
+      const id = randomUUID();
+      tagIdMap.set(t.id, id);
+      return { id, key: t.key, value: t.value, type: t.type };
+    });
     if (clonedTags.length) await store.updateProjectTags(newProject.id, clonedTags);
 
     // Copy nodes, keeping a map oldNodeId -> newNodeId so edges can be rewired.
@@ -297,7 +301,7 @@ export const store = {
         description: n.description,
         positionX: n.positionX,
         positionY: n.positionY,
-        config: n.config,
+        config: remapConfigTagIds(n.config, tagIdMap),
       });
       if (created) idMap.set(n.id, created.id);
     }
@@ -485,6 +489,36 @@ async function touchProject(projectId: string): Promise<void> {
     'UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
     [projectId]
   );
+}
+
+// When a project is forked its tags are re-id'd, so any node config field that
+// stores a *tag id* must be rewritten to the cloned tag's id. Known shapes:
+//   - urlParts: string[]            (ordered tag ids for the URL builder)
+//   - urlTagId: string              (legacy single-tag URL)
+//   - outputBindings: [{ tagId }]   (response->tag bindings)
+//   - tagQuery / tagBody: string[]  (legacy apply-tags arrays)
+// Anything not in the map is left as-is (defensive: don't drop unknown refs).
+function remapConfigTagIds(
+  config: Record<string, any>,
+  tagIdMap: Map<string, string>
+): Record<string, any> {
+  if (!config || typeof config !== 'object' || tagIdMap.size === 0) return config;
+  const map = (id: unknown): unknown =>
+    typeof id === 'string' && tagIdMap.has(id) ? tagIdMap.get(id) : id;
+  const next: Record<string, any> = { ...config };
+
+  if (Array.isArray(next.urlParts)) next.urlParts = next.urlParts.map(map);
+  if (typeof next.urlTagId === 'string') next.urlTagId = map(next.urlTagId);
+  if (Array.isArray(next.tagQuery)) next.tagQuery = next.tagQuery.map(map);
+  if (Array.isArray(next.tagBody)) next.tagBody = next.tagBody.map(map);
+  if (Array.isArray(next.outputBindings)) {
+    next.outputBindings = next.outputBindings.map((b: any) =>
+      b && typeof b === 'object' && typeof b.tagId === 'string'
+        ? { ...b, tagId: map(b.tagId) }
+        : b
+    );
+  }
+  return next;
 }
 
 function stripUndefined<T extends object>(obj: T): Partial<T> {
