@@ -14,10 +14,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  // Authorization: you may fork your own projects/templates. A template owned by
-  // someone else stays private to its owner (no public templates yet), so a
-  // non-owner gets a 404 to avoid leaking existence.
-  if (source.userId !== userId) {
+  // Authorization: you may fork (a) your own projects/templates, or (b) any
+  // public tutorial template (is_public_template=1). A *private* template owned
+  // by someone else stays private — a non-owner gets a 404 to avoid leaking
+  // existence.
+  if (source.userId !== userId && !source.isPublicTemplate) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 

@@ -20,6 +20,7 @@ interface Template {
   id: string;
   name: string;
   description?: string;
+  isPublicTemplate?: boolean;
   nodeCount?: number;
   edgeCount?: number;
   tagCount?: number;
@@ -138,9 +139,17 @@ export default function DashboardPage() {
           <h1 className="flex items-center gap-2 text-2xl font-bold text-[var(--color-primary)]">
             <span>🗂️</span> ProjectPlanner
           </h1>
-          <Button variant="ghost" onClick={() => router.push('/')}>
-            Sign Out
-          </Button>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/docs"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-primary)]"
+            >
+              📘 Docs
+            </Link>
+            <Button variant="ghost" onClick={() => router.push('/')}>
+              Sign Out
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -212,6 +221,11 @@ export default function DashboardPage() {
                       <span className="rounded bg-[var(--color-primary)]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">
                         Template
                       </span>
+                      {tpl.isPublicTemplate && (
+                        <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+                          Public
+                        </span>
+                      )}
                     </div>
                     <h3 className="mb-1 text-lg font-semibold text-[var(--color-neutral-900)]">
                       {tpl.name}

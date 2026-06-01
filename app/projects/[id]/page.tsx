@@ -781,6 +781,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           >
             ← Dashboard
           </Link>
+          <Link
+            href="/docs"
+            target="_blank"
+            className="shrink-0 text-sm font-medium text-[var(--color-neutral-500)] hover:text-[var(--color-primary)] hover:underline"
+          >
+            📘 Docs
+          </Link>
           <div className="min-w-0">
             <h1 className="truncate text-lg font-bold text-[var(--color-neutral-900)] sm:text-xl">
               {project?.name}

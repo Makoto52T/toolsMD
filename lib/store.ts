@@ -46,6 +46,10 @@ export interface Project {
   // dashboard list and surfaced in a separate "Templates" section. They can be
   // forked into fresh projects or appended onto an existing canvas.
   isTemplate: boolean;
+  // Public tutorial templates (is_public_template=1) are visible to *every*
+  // user in the Templates section (owned by the system user). Private templates
+  // (is_public_template=0) stay visible only to their owner.
+  isPublicTemplate: boolean;
   tags: Tag[];
   nodes: Node[];
   edges: Edge[];
@@ -143,6 +147,7 @@ async function loadProjectRow(r: RowDataPacket): Promise<Project> {
     name: r.name,
     description: r.description ?? '',
     isTemplate: Boolean(r.is_template),
+    isPublicTemplate: Boolean(r.is_public_template),
     tags: parseTags(r.tags),
     nodes: nodeRows.map(mapNode),
     edges: edgeRows.map(mapEdge),
@@ -231,10 +236,26 @@ export const store = {
     return Promise.all(rows.map(loadProjectRow));
   },
 
+  // Templates visible to a user: their own private templates PLUS every public
+  // tutorial template (is_public_template=1, owned by the system user). Ordered
+  // public-first so the curated tutorials lead, then the user's own.
   getUserTemplates: async (userId: string): Promise<Project[]> => {
     const [rows] = await pool.query<RowDataPacket[]>(
-      'SELECT * FROM projects WHERE user_id = ? AND is_template = 1 ORDER BY updated_at DESC',
+      `SELECT * FROM projects
+         WHERE is_template = 1 AND (user_id = ? OR is_public_template = 1)
+         ORDER BY is_public_template DESC, updated_at DESC`,
       [userId]
+    );
+    return Promise.all(rows.map(loadProjectRow));
+  },
+
+  // Public tutorial templates only — usable without auth (e.g. a logged-out
+  // /docs preview). No user filter.
+  getPublicTemplates: async (): Promise<Project[]> => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT * FROM projects
+         WHERE is_template = 1 AND is_public_template = 1
+         ORDER BY updated_at DESC`
     );
     return Promise.all(rows.map(loadProjectRow));
   },

@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
     id: p.id,
     name: p.name,
     description: p.description,
+    isPublicTemplate: p.isPublicTemplate,
     nodeCount: p.nodes.length,
     edgeCount: p.edges.length,
     tagCount: p.tags.length,
