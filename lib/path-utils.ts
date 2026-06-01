@@ -213,6 +213,91 @@ export function hasTagPlaceholder(input: unknown): boolean {
   return typeof input === 'string' && /\{\{\s*[^{}]+?\s*\}\}/.test(input);
 }
 
+// ---------------------------------------------------------------------------
+// Typed tags — classify a tag value so the UI / URL-builder know how to use it.
+//
+//   domain   : a full origin (and optional path), e.g. https://api.example.com
+//   pathname : a path segment to append, e.g. /v1/users
+//   param    : a query fragment, e.g. ?ref=abc or page=2 (executor prefixes ?/&)
+//   body     : a JSON object/array literal, e.g. {"a":1} or [1,2]
+//   generic  : anything else (a plain scalar like an api key, env name, token)
+//
+// detectTagType is a best-effort auto-classifier used (a) live as the user types
+// a value and (b) lazily for legacy tags that predate the `type` field. The user
+// can always override the detected type manually.
+// ---------------------------------------------------------------------------
+export type TagType = 'domain' | 'pathname' | 'param' | 'body' | 'generic';
+
+export const TAG_TYPES: readonly TagType[] = [
+  'domain',
+  'pathname',
+  'param',
+  'body',
+  'generic',
+];
+
+export function isTagType(v: unknown): v is TagType {
+  return typeof v === 'string' && (TAG_TYPES as readonly string[]).includes(v);
+}
+
+// Assemble a URL from ordered url parts. Each part is the *value* of a tag plus
+// its type. Rules:
+//   - domain  : used as the origin/base (the first part should be a domain).
+//   - pathname: appended verbatim (the user-supplied value, e.g. "/v1/users").
+//   - param   : a query fragment. The raw value may be "?ref=abc", "&ref=abc" or
+//               a bare "ref=abc"; we strip any leading ?/& and join params with
+//               the correct separator (first param gets "?" unless the base
+//               already has one, subsequent params get "&").
+//   - other   : ignored (generic/body don't belong in a URL).
+// Pure string concatenation (no URL() normalisation) so the result is exactly
+// what the user assembled — predictable for the preview and the executor.
+export function buildUrlFromParts(
+  parts: Array<{ value: string; type: TagType }>,
+): string {
+  let base = '';
+  const paramFrags: string[] = [];
+  for (const p of parts) {
+    if (!p || typeof p.value !== 'string') continue;
+    if (p.type === 'param') {
+      const frag = p.value.trim().replace(/^[?&]+/, '');
+      if (frag) paramFrags.push(frag);
+    } else if (p.type === 'pathname') {
+      base += p.value;
+    } else {
+      // domain (or anything else used as a base segment)
+      base += p.value;
+    }
+  }
+  if (paramFrags.length === 0) return base;
+  const alreadyHasQuery = base.includes('?');
+  let out = base;
+  paramFrags.forEach((frag, i) => {
+    const sep = i === 0 ? (alreadyHasQuery ? '&' : '?') : '&';
+    out += sep + frag;
+  });
+  return out;
+}
+
+export function detectTagType(value: unknown): TagType {
+  if (typeof value !== 'string') return 'generic';
+  const v = value.trim();
+  if (!v) return 'generic';
+  if (/^https?:\/\//i.test(v)) return 'domain';
+  if (v.startsWith('/')) return 'pathname';
+  // A query fragment: leading ?/& OR a bare `key=...` pair.
+  if (v.startsWith('?') || v.startsWith('&') || /^[\w.-]+=/.test(v)) return 'param';
+  // A JSON object/array literal.
+  if (v.startsWith('{') || v.startsWith('[')) {
+    try {
+      JSON.parse(v);
+      return 'body';
+    } catch {
+      // not valid JSON — fall through to generic
+    }
+  }
+  return 'generic';
+}
+
 // Recursively interpolate every string found in an object/array (header maps,
 // JSON bodies). Non-string leaves pass through untouched. Returns the new value
 // plus the union of all missing keys encountered.

@@ -3,6 +3,7 @@
 import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 import pool from './db';
+import { detectTagType, isTagType, type TagType } from './path-utils';
 
 export interface Node {
   id: string;
@@ -25,6 +26,10 @@ export interface Tag {
   id: string;
   key: string;
   value: string;
+  // How the tag value is used: domain/pathname/param/body in the URL builder &
+  // body, or generic for plain scalars. Legacy tags without a stored type are
+  // lazily auto-detected on read (and written back on the next tags PUT).
+  type: TagType;
 }
 
 export interface Project {
@@ -80,7 +85,15 @@ function parseTags(raw: unknown): Tag[] {
         typeof (t as any).id === 'string' &&
         typeof (t as any).key === 'string'
     )
-    .map((t) => ({ id: t.id, key: t.key, value: String((t as any).value ?? '') }));
+    .map((t) => {
+      const value = String((t as any).value ?? '');
+      // Lazy migrate: legacy tags have no `type`. Auto-detect from the value so
+      // old projects get sensible types without a migration script; the next
+      // tags PUT writes the resolved type back to the DB.
+      const rawType = (t as any).type;
+      const type: TagType = isTagType(rawType) ? rawType : detectTagType(value);
+      return { id: (t as any).id, key: (t as any).key, value, type };
+    });
 }
 
 function mapNode(r: RowDataPacket): Node {

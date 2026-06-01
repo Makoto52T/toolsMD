@@ -2,11 +2,36 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/Button';
+import { detectTagType, TAG_TYPES, type TagType } from '@/lib/path-utils';
 
 export interface Tag {
   id: string;
   key: string;
   value: string;
+  type: TagType;
+}
+
+// Visual treatment per tag type: icon + colour + label. Used by the badge and
+// the type selector chips so the two stay in sync.
+export const TAG_TYPE_META: Record<TagType, { icon: string; label: string; cls: string }> = {
+  domain: { icon: '🌐', label: 'domain', cls: 'bg-blue-100 text-blue-700' },
+  pathname: { icon: '📁', label: 'pathname', cls: 'bg-green-100 text-green-700' },
+  param: { icon: '🔑', label: 'param', cls: 'bg-orange-100 text-orange-700' },
+  body: { icon: '📦', label: 'body', cls: 'bg-purple-100 text-purple-700' },
+  generic: { icon: '🏷️', label: 'generic', cls: 'bg-neutral-100 text-neutral-600' },
+};
+
+function TypeBadge({ type }: { type: TagType }) {
+  const m = TAG_TYPE_META[type] ?? TAG_TYPE_META.generic;
+  return (
+    <span
+      data-testid={`tag-type-badge-${type}`}
+      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${m.cls}`}
+      title={`Type: ${m.label}`}
+    >
+      {m.icon} {m.label}
+    </span>
+  );
 }
 
 // A masked value cell with a per-row show/hide toggle. DB stores plaintext and
@@ -47,12 +72,18 @@ export function TagsPanel({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftKey, setDraftKey] = useState('');
   const [draftValue, setDraftValue] = useState('');
+  // null = "auto" (use detected type); a TagType = manual override.
+  const [draftType, setDraftType] = useState<TagType | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const detectedType = detectTagType(draftValue);
+  const effectiveType: TagType = draftType ?? detectedType;
 
   const resetForm = () => {
     setEditingId(null);
     setDraftKey('');
     setDraftValue('');
+    setDraftType(null);
     setError(null);
   };
 
@@ -65,6 +96,9 @@ export function TagsPanel({
     setEditingId(t.id);
     setDraftKey(t.key);
     setDraftValue(t.value);
+    // Editing an existing tag: start in override mode pinned to its stored type
+    // (so re-saving without touching the value preserves an explicit choice).
+    setDraftType(t.type ?? null);
     setError(null);
   };
 
@@ -82,10 +116,19 @@ export function TagsPanel({
     if (editingId === '__new__') {
       onChange([
         ...tags,
-        { id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`, key, value: draftValue },
+        {
+          id: `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          key,
+          value: draftValue,
+          type: effectiveType,
+        },
       ]);
     } else {
-      onChange(tags.map((t) => (t.id === editingId ? { ...t, key, value: draftValue } : t)));
+      onChange(
+        tags.map((t) =>
+          t.id === editingId ? { ...t, key, value: draftValue, type: effectiveType } : t,
+        ),
+      );
     }
     resetForm();
   };
@@ -130,6 +173,45 @@ export function TagsPanel({
             onChange={(e) => setDraftValue(e.target.value)}
             className="w-full rounded-md border border-[var(--color-neutral-300)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
           />
+          {/* Type selector: ● auto [detected: x] + override chips. */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-neutral-400)]">
+              Type
+            </span>
+            <div className="flex flex-wrap gap-1" data-testid="tag-type-selector">
+              <button
+                type="button"
+                data-testid="tag-type-auto"
+                onClick={() => setDraftType(null)}
+                className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                  draftType === null
+                    ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                    : 'border-[var(--color-neutral-300)] bg-white text-[var(--color-neutral-600)]'
+                }`}
+                title="Auto-detect type from the value"
+              >
+                ● auto{draftType === null ? ` [${detectedType}]` : ''}
+              </button>
+              {TAG_TYPES.map((tt) => {
+                const m = TAG_TYPE_META[tt];
+                return (
+                  <button
+                    key={tt}
+                    type="button"
+                    data-testid={`tag-type-chip-${tt}`}
+                    onClick={() => setDraftType(tt)}
+                    className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                      draftType === tt
+                        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                        : 'border-[var(--color-neutral-300)] bg-white text-[var(--color-neutral-600)]'
+                    }`}
+                  >
+                    {m.icon} {m.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           {error && <p className="text-xs text-[var(--color-danger)]">{error}</p>}
           <div className="flex gap-2">
             <Button size="sm" onClick={commit} data-testid="tag-save" className="flex-1">
@@ -184,6 +266,7 @@ export function TagsPanel({
                     <span className="truncate text-xs font-semibold text-[var(--color-neutral-900)]">
                       {t.key}
                     </span>
+                    <TypeBadge type={t.type ?? 'generic'} />
                     {(() => {
                       const sources = autoInfo[t.id];
                       if (!sources || sources.length === 0) return null;

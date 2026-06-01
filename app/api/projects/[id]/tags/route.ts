@@ -1,4 +1,5 @@
 import { store, type Tag } from '@/lib/store';
+import { detectTagType, isTagType } from '@/lib/path-utils';
 import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -54,7 +55,14 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     seenKeys.add(key);
     const value = (raw as any).value == null ? '' : String((raw as any).value);
     const tagId = typeof (raw as any).id === 'string' && (raw as any).id ? (raw as any).id : randomUUID();
-    tags.push({ id: tagId, key, value });
+    // Validate type if present; reject unknown values rather than silently
+    // coercing. Absent type → auto-detect from the value (lazy migrate path).
+    const rawType = (raw as any).type;
+    if (rawType != null && !isTagType(rawType)) {
+      return NextResponse.json({ error: `Invalid tag type: ${rawType}` }, { status: 400 });
+    }
+    const type = isTagType(rawType) ? rawType : detectTagType(value);
+    tags.push({ id: tagId, key, value, type });
   }
 
   const project = await store.updateProjectTags(id, tags);

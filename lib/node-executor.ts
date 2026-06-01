@@ -1,5 +1,13 @@
 import { Node as PlannerNode, Edge, Tag } from './store';
-import { getByPath, valueToTagString, interpolateTags, interpolateDeep } from './path-utils';
+import {
+  getByPath,
+  valueToTagString,
+  interpolateTags,
+  interpolateDeep,
+  buildUrlFromParts,
+  detectTagType,
+  type TagType,
+} from './path-utils';
 
 // A single response→tag binding stored in node.config.outputBindings.
 //   path  : dot/bracket path into the node's output (e.g. "data.access_token")
@@ -65,12 +73,6 @@ function resolveTags(tagIds: unknown, tags: Tag[]): Tag[] {
   return out;
 }
 
-// Resolve a single tag id into its tag (or undefined). Used for url-from-tag.
-function tagById(tagId: unknown, tags: Tag[]): Tag | undefined {
-  if (typeof tagId !== 'string' || !tagId) return undefined;
-  return tags.find((t) => t.id === tagId);
-}
-
 /**
  * Pure: apply a node's output bindings against its output, producing the next
  * tag array (last-write-wins) plus any bindings whose path did NOT resolve.
@@ -110,7 +112,12 @@ export function applyOutputBindings(
     } else {
       // Tag referenced by id but not present (e.g. bound before tag persisted)
       // — auto-create it so the binding still takes effect.
-      const created: Tag = { id: b.tagId, key: b.tagKey || b.path, value };
+      const created: Tag = {
+        id: b.tagId,
+        key: b.tagKey || b.path,
+        value,
+        type: detectTagType(value),
+      };
       next.push(created);
       byId.set(created.id, created);
     }
@@ -146,29 +153,53 @@ export async function executeNode(
         const {
           url,
           urlMode,
+          urlParts,
           urlTagId,
           method = 'GET',
           headers = {},
           body,
+          // Legacy config (pre-URL-builder). Still honoured so old nodes don't
+          // break after deploy, but no UI produces these any more.
           applyTagQuery = false,
           tagQuery,
           applyTagBody = false,
           tagBody,
         } = node.config;
 
-        // ---- Resolve the base URL: manual (config.url) or from a tag ----
-        // urlMode === 'tag' (or a bare urlTagId) means the base url comes from
-        // the referenced tag's value at execute time.
+        const httpMethod = String(method).toUpperCase();
+
+        // ---- Resolve the base URL ----
+        // Three shapes, newest first:
+        //   1. urlMode === 'builder' (or a urlParts array)  -> assemble from
+        //      ordered typed tags (domain + pathname/param).
+        //   2. legacy urlMode === 'tag' / a bare urlTagId   -> treat as a single
+        //      url part [urlTagId] (back-compat).
+        //   3. otherwise                                    -> manual config.url.
         let baseUrl: string | undefined;
-        if (urlMode === 'tag' || (urlMode == null && urlTagId)) {
-          const t = tagById(urlTagId, tags);
-          if (!t) {
-            return { nodeId: node.id, status: 'error', error: 'URL tag not found or not set' };
+        const partIds: string[] = Array.isArray(urlParts)
+          ? urlParts.filter((x: unknown): x is string => typeof x === 'string')
+          : urlMode === 'tag' || (urlMode == null && urlTagId)
+          ? typeof urlTagId === 'string' && urlTagId
+            ? [urlTagId]
+            : []
+          : [];
+
+        const useBuilder = urlMode === 'builder' || partIds.length > 0;
+        if (useBuilder) {
+          const byId = new Map(tags.map((t) => [t.id, t]));
+          const parts: Array<{ value: string; type: TagType }> = [];
+          for (const pid of partIds) {
+            const t = byId.get(pid);
+            if (!t) continue; // tag deleted after referencing — skip defensively
+            // Tag.type should always be present now, but be defensive about old
+            // tag rows read before the lazy-migrate path ran.
+            const type: TagType = (t as Tag).type ?? detectTagType(t.value);
+            parts.push({ value: t.value, type });
           }
-          baseUrl = t.value;
-          if (!baseUrl) {
-            return { nodeId: node.id, status: 'error', error: 'URL tag has an empty value' };
+          if (parts.length === 0) {
+            return { nodeId: node.id, status: 'error', error: 'URL builder has no resolvable tags' };
           }
+          baseUrl = buildUrlFromParts(parts);
         } else {
           baseUrl = url ? String(url) : undefined;
         }
@@ -177,30 +208,25 @@ export async function executeNode(
           return { nodeId: node.id, status: 'error', error: 'No URL provided' };
         }
 
-        const httpMethod = String(method).toUpperCase();
-
         // ---- n8n-style {{tag}} interpolation in the base URL ----
         // Lets a user embed a tag mid-string (e.g. ".../users/{{userId}}") in
-        // either the typed url or a url-from-tag value. Runs before tagQuery so
-        // query params are appended onto the already-substituted url.
+        // either the typed url or an assembled url. Runs before any legacy
+        // tagQuery so params are appended onto the already-substituted url.
         baseUrl = interpolateTags(String(baseUrl), tags).result;
 
-        // ---- Apply tagQuery: append resolved tags as query string params ----
+        // ---- Legacy tagQuery: append resolved tags as query params ----
+        // The URL builder supersedes this (query lives in param tags), but old
+        // configs may still carry applyTagQuery — keep honouring them so a node
+        // saved before this change keeps producing the same request.
         let finalUrl = String(baseUrl);
         if (applyTagQuery) {
-          // The tag that supplies the base URL is NOT a query param. If it was
-          // (mistakenly) also selected as a query tag, drop it here so we don't
-          // append e.g. `?endpoint=https%3A%2F%2F...` onto the very url it built.
-          const qTags = resolveTags(tagQuery, tags).filter((t) => t.id !== urlTagId);
+          const qTags = resolveTags(tagQuery, tags).filter((t) => !partIds.includes(t.id));
           if (qTags.length > 0) {
             try {
-              // Preserve any existing query already present on the url.
               const u = new URL(finalUrl);
               for (const t of qTags) u.searchParams.set(t.key, t.value);
               finalUrl = u.toString();
             } catch {
-              // Relative / malformed url: fall back to manual query concat so we
-              // still honour the configured tags rather than dropping them.
               const sp = new URLSearchParams();
               for (const t of qTags) sp.set(t.key, t.value);
               finalUrl += (finalUrl.includes('?') ? '&' : '?') + sp.toString();
