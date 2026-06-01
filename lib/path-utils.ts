@@ -156,3 +156,89 @@ export function leafKey(path: string): string {
   }
   return tokens[tokens.length - 1];
 }
+
+// ---------------------------------------------------------------------------
+// Tag interpolation — n8n-style `{{tagKey}}` substitution inside a string.
+//
+// Used so a user can write a header value like `Bearer {{access_token}}` (or a
+// url / body string with `{{tag}}` placeholders) and have it resolved against
+// the project tags at execute time. Matches tags by their `key` (not id), so
+// the user types the human-readable key shown in the UI.
+//
+//   interpolateTags('Bearer {{access_token}}', [{key:'access_token',value:'abc'}])
+//     => { result: 'Bearer abc', missing: [] }
+//
+// Behaviour:
+//   - `{{key}}`        -> tag.value (whitespace inside braces is trimmed)
+//   - unknown key      -> the placeholder is left intact AND reported in
+//                         `missing` so the UI can warn. We deliberately do NOT
+//                         drop it to empty (silent data loss is worse than a
+//                         visible, un-substituted token the user can fix).
+//   - `{{}}` / blank   -> left intact (not a valid placeholder).
+// Matching is last-write-wins on duplicate keys (consistent with tag merging).
+// ---------------------------------------------------------------------------
+const TAG_PLACEHOLDER_RE = /\{\{\s*([^{}]*?)\s*\}\}/g;
+
+export interface InterpolateResult {
+  result: string;
+  // Keys referenced via {{...}} that had no matching tag.
+  missing: string[];
+}
+
+export function interpolateTags(
+  input: string,
+  tags: Array<{ key: string; value: string }>,
+): InterpolateResult {
+  if (typeof input !== 'string' || input.indexOf('{{') === -1) {
+    return { result: input, missing: [] };
+  }
+  // Last-write-wins map of key -> value.
+  const byKey = new Map<string, string>();
+  for (const t of tags) {
+    if (t && typeof t.key === 'string') byKey.set(t.key, t.value ?? '');
+  }
+  const missing: string[] = [];
+  const result = input.replace(TAG_PLACEHOLDER_RE, (whole, rawKey: string) => {
+    const key = String(rawKey);
+    if (!key) return whole; // `{{}}` — not a real placeholder
+    if (byKey.has(key)) return byKey.get(key) as string;
+    if (!missing.includes(key)) missing.push(key);
+    return whole; // leave the token intact so the user notices
+  });
+  return { result, missing };
+}
+
+// Does a string contain any {{tag}} placeholder? Cheap pre-check for the UI.
+export function hasTagPlaceholder(input: unknown): boolean {
+  return typeof input === 'string' && /\{\{\s*[^{}]+?\s*\}\}/.test(input);
+}
+
+// Recursively interpolate every string found in an object/array (header maps,
+// JSON bodies). Non-string leaves pass through untouched. Returns the new value
+// plus the union of all missing keys encountered.
+export function interpolateDeep(
+  value: unknown,
+  tags: Array<{ key: string; value: string }>,
+): { value: unknown; missing: string[] } {
+  const missing: string[] = [];
+  const seen = (k: string) => {
+    if (!missing.includes(k)) missing.push(k);
+  };
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') {
+      const r = interpolateTags(v, tags);
+      r.missing.forEach(seen);
+      return r.result;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        out[k] = walk(val);
+      }
+      return out;
+    }
+    return v;
+  };
+  return { value: walk(value), missing };
+}

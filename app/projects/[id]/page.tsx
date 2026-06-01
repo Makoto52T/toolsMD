@@ -31,6 +31,7 @@ import {
   type NodeBinding,
   type BindRequest,
 } from '@/components/canvas/ExecutionResultPanel';
+import { interpolateTags, hasTagPlaceholder } from '@/lib/path-utils';
 
 interface Project {
   id: string;
@@ -856,6 +857,47 @@ function HttpNodeFields({
 
   const byId = new Map(tags.map((t) => [t.id, t]));
 
+  // Headers textarea is uncontrolled (defaultValue + onBlur). Keep a ref so the
+  // tag-picker chips can splice `{{key}}` in at the caret and persist via setCfg.
+  const headersRef = useRef<HTMLTextAreaElement | null>(null);
+  const insertTagToken = (key: string) => {
+    const el = headersRef.current;
+    const token = `{{${key}}}`;
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + token + el.value.slice(end);
+    el.value = next;
+    // Restore caret just after the inserted token and refocus.
+    const caret = start + token.length;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    setCfg({ headers: parseMaybeJson(next) });
+  };
+
+  // Resolved-headers preview: substitute {{tag}} against the project tags, but
+  // MASK the substituted value (tokens are usually secrets). Unmatched {{key}}
+  // placeholders are flagged so the user can fix a typo'd tag name.
+  const headersPreview = (() => {
+    const h = cfg.headers;
+    if (!h || typeof h !== 'object' || Array.isArray(h)) return null;
+    const maskTags = tags.map((t) => ({
+      key: t.key,
+      value: '•'.repeat(Math.max(3, Math.min(8, t.value.length || 3))),
+    }));
+    const rows: { k: string; v: string; missing: string[] }[] = [];
+    for (const [k, v] of Object.entries(h as Record<string, unknown>)) {
+      if (typeof v !== 'string') {
+        rows.push({ k, v: String(v), missing: [] });
+        continue;
+      }
+      const r = interpolateTags(v, maskTags);
+      rows.push({ k, v: r.result, missing: r.missing });
+    }
+    const anyTag = Object.values(h as Record<string, unknown>).some(hasTagPlaceholder);
+    return anyTag ? rows : null;
+  })();
+
   // ----- live preview -----
   // Base url: manual text, or the resolved value of the selected url tag (masked).
   const urlTag = urlMode === 'tag' ? byId.get(urlTagId) : undefined;
@@ -963,13 +1005,64 @@ function HttpNodeFields({
           Headers (JSON)
         </label>
         <textarea
+          ref={headersRef}
           rows={2}
-          placeholder='{ "Authorization": "Bearer ..." }'
+          placeholder='{ "Authorization": "Bearer {{access_token}}" }'
           defaultValue={headersText}
           data-testid="http-headers"
           onBlur={(e) => setCfg({ headers: parseMaybeJson(e.target.value) })}
           className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
         />
+        <p className="mt-1 text-[10px] text-[var(--color-neutral-500)]">
+          Insert a tag with <code className="font-mono">{'{{tagKey}}'}</code> — e.g.{' '}
+          <code className="font-mono">Bearer {'{{access_token}}'}</code>. Click a tag below to
+          insert it at the cursor.
+        </p>
+        {/* Tag variable picker — click to splice {{key}} into the headers box. */}
+        <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="header-tag-picker">
+          {tags.length === 0 ? (
+            <span className="text-[10px] text-[var(--color-neutral-400)]">
+              No tags defined yet.
+            </span>
+          ) : (
+            tags.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => insertTagToken(t.key)}
+                data-testid={`insert-tag-${t.key}`}
+                className="rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-0.5 font-mono text-[10px] text-[var(--color-neutral-700)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                title={`Insert {{${t.key}}}`}
+              >
+                {'{{'}{t.key}{'}}'}
+              </button>
+            ))
+          )}
+        </div>
+        {/* Resolved-headers preview (tag values masked — real value is sent). */}
+        {headersPreview && (
+          <div
+            data-testid="http-headers-preview"
+            className="mt-2 rounded-lg bg-[var(--color-neutral-900)] p-2"
+          >
+            <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+              Resolved headers
+            </p>
+            {headersPreview.map((r) => (
+              <code
+                key={r.k}
+                className="block break-all font-mono text-[11px] text-[var(--color-neutral-100)]"
+              >
+                {r.k}: {r.v}
+                {r.missing.length > 0 && (
+                  <span className="ml-2 text-[var(--color-warning)]">
+                    ⚠ unknown tag: {r.missing.join(', ')}
+                  </span>
+                )}
+              </code>
+            ))}
+          </div>
+        )}
       </div>
 
       <div>

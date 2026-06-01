@@ -1,5 +1,5 @@
 import { Node as PlannerNode, Edge, Tag } from './store';
-import { getByPath, valueToTagString } from './path-utils';
+import { getByPath, valueToTagString, interpolateTags, interpolateDeep } from './path-utils';
 
 // A single response→tag binding stored in node.config.outputBindings.
 //   path  : dot/bracket path into the node's output (e.g. "data.access_token")
@@ -179,6 +179,12 @@ export async function executeNode(
 
         const httpMethod = String(method).toUpperCase();
 
+        // ---- n8n-style {{tag}} interpolation in the base URL ----
+        // Lets a user embed a tag mid-string (e.g. ".../users/{{userId}}") in
+        // either the typed url or a url-from-tag value. Runs before tagQuery so
+        // query params are appended onto the already-substituted url.
+        baseUrl = interpolateTags(String(baseUrl), tags).result;
+
         // ---- Apply tagQuery: append resolved tags as query string params ----
         let finalUrl = String(baseUrl);
         if (applyTagQuery) {
@@ -218,13 +224,32 @@ export async function executeNode(
           }
         }
 
+        // ---- n8n-style {{tag}} interpolation inside the body ----
+        // Substitutes any {{tag}} placeholder in string values of the body
+        // (e.g. { "token": "Bearer {{access_token}}" }). Runs after tagBody so
+        // explicitly-typed placeholders win over auto-injected key/value tags.
+        if (httpMethod !== 'GET' && finalBody != null) {
+          finalBody = interpolateDeep(finalBody, tags).value;
+        }
+
+        // ---- n8n-style {{tag}} interpolation in header values ----
+        // The common case: an Authorization header of `Bearer {{access_token}}`
+        // resolved from a tag captured by an earlier login node.
+        const finalHeaders: Record<string, string> = {};
+        if (headers && typeof headers === 'object' && !Array.isArray(headers)) {
+          for (const [k, v] of Object.entries(headers as Record<string, unknown>)) {
+            finalHeaders[k] =
+              typeof v === 'string' ? interpolateTags(v, tags).result : String(v);
+          }
+        }
+
         const started = Date.now();
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
         try {
           const response = await fetch(finalUrl, {
             method: httpMethod,
-            headers: { 'Content-Type': 'application/json', ...headers },
+            headers: { 'Content-Type': 'application/json', ...finalHeaders },
             body:
               httpMethod !== 'GET' && httpMethod !== 'HEAD' && finalBody
                 ? JSON.stringify(finalBody)
