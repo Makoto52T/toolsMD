@@ -79,6 +79,19 @@ export function TagsPanel({
   const [error, setError] = useState<string | null>(null);
   // Filter box: matches against key, value, or type (case-insensitive).
   const [filter, setFilter] = useState('');
+  // Multi-select type filter: empty set = "all" (no gating). Selecting one or
+  // more types shows only tags whose type is in the set (OR within the set).
+  // Combined with the text filter as AND.
+  const [typeFilter, setTypeFilter] = useState<Set<TagType>>(new Set());
+
+  const toggleTypeFilter = (tt: TagType) => {
+    setTypeFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(tt)) next.delete(tt);
+      else next.add(tt);
+      return next;
+    });
+  };
 
   const detectedType = detectTagType(draftValue);
   const effectiveType: TagType = draftType ?? detectedType;
@@ -142,18 +155,22 @@ export function TagsPanel({
     if (editingId === id) resetForm();
   };
 
-  // Filtered view: match the query against key, value, or type label.
+  // Filtered view: type chips (OR within selected types) AND text query (matches
+  // key / value / type label). Empty type set = no type gating.
   const q = filter.trim().toLowerCase();
-  const visibleTags = q
-    ? tags.filter((t) => {
-        const typeLabel = (TAG_TYPE_META[t.type ?? 'generic'] ?? TAG_TYPE_META.generic).label;
-        return (
-          t.key.toLowerCase().includes(q) ||
-          t.value.toLowerCase().includes(q) ||
-          typeLabel.toLowerCase().includes(q)
-        );
-      })
-    : tags;
+  const hasTypeFilter = typeFilter.size > 0;
+  const visibleTags = tags.filter((t) => {
+    const ttype = t.type ?? 'generic';
+    if (hasTypeFilter && !typeFilter.has(ttype)) return false;
+    if (!q) return true;
+    const typeLabel = (TAG_TYPE_META[ttype] ?? TAG_TYPE_META.generic).label;
+    return (
+      t.key.toLowerCase().includes(q) ||
+      t.value.toLowerCase().includes(q) ||
+      typeLabel.toLowerCase().includes(q)
+    );
+  });
+  const isFiltering = q !== '' || hasTypeFilter;
 
   const form =
     editingId !== null ? (
@@ -277,6 +294,52 @@ export function TagsPanel({
             </button>
           ) : null}
         </div>
+        {/* Type filter chips — multi-select. None selected = show all types.
+            Each selected type is OR-ed; combined with the text box as AND. */}
+        <div className="mt-2 flex flex-wrap items-center gap-1" data-testid="tag-type-filter">
+          {TAG_TYPES.map((tt) => {
+            const m = TAG_TYPE_META[tt];
+            const active = typeFilter.has(tt);
+            const count = tags.filter((t) => (t.type ?? 'generic') === tt).length;
+            return (
+              <button
+                key={tt}
+                type="button"
+                data-testid={`tag-type-filter-${tt}`}
+                aria-pressed={active}
+                onClick={() => toggleTypeFilter(tt)}
+                title={`${active ? 'Hide' : 'Show only'} ${m.label} tags`}
+                className={`rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                  active
+                    ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white'
+                    : 'border-[var(--color-neutral-300)] bg-white text-[var(--color-neutral-600)] hover:border-[var(--color-neutral-400)]'
+                }`}
+              >
+                {m.icon} {m.label} {count}
+              </button>
+            );
+          })}
+          {hasTypeFilter ? (
+            <button
+              type="button"
+              data-testid="tag-type-filter-clear"
+              onClick={() => setTypeFilter(new Set())}
+              title="Clear type filter"
+              className="rounded-full px-2 py-0.5 text-[10px] text-[var(--color-neutral-500)] underline hover:text-[var(--color-neutral-800)]"
+            >
+              clear
+            </button>
+          ) : null}
+        </div>
+        {/* Result count — only while a filter is active. */}
+        {isFiltering ? (
+          <p
+            data-testid="tag-filter-count"
+            className="mt-1.5 text-[10px] text-[var(--color-neutral-400)]"
+          >
+            {visibleTags.length} of {tags.length}
+          </p>
+        ) : null}
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-3">
         <p className="mb-2 text-xs text-[var(--color-neutral-400)]">
@@ -290,7 +353,7 @@ export function TagsPanel({
             data-testid="tag-filter-empty"
             className="py-4 text-center text-xs text-[var(--color-neutral-400)]"
           >
-            No tags match “{filter}”.
+            {filter ? <>No tags match “{filter}”.</> : 'No tags match the selected types.'}
           </p>
         ) : (
           <div className="flex flex-col gap-1.5">
