@@ -182,7 +182,10 @@ export async function executeNode(
         // ---- Apply tagQuery: append resolved tags as query string params ----
         let finalUrl = String(baseUrl);
         if (applyTagQuery) {
-          const qTags = resolveTags(tagQuery, tags);
+          // The tag that supplies the base URL is NOT a query param. If it was
+          // (mistakenly) also selected as a query tag, drop it here so we don't
+          // append e.g. `?endpoint=https%3A%2F%2F...` onto the very url it built.
+          const qTags = resolveTags(tagQuery, tags).filter((t) => t.id !== urlTagId);
           if (qTags.length > 0) {
             try {
               // Preserve any existing query already present on the url.

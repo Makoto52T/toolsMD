@@ -867,7 +867,9 @@ function HttpNodeFields({
       : url || '(no url)';
   const previewUrl = (() => {
     if (baseForPreview.startsWith('(')) return baseForPreview;
-    const selected = applyTagQuery ? tagQuery.map((id) => byId.get(id)).filter(Boolean) : [];
+    const selected = applyTagQuery
+      ? tagQuery.filter((id) => id !== urlTagId).map((id) => byId.get(id)).filter(Boolean)
+      : [];
     if (selected.length === 0) return baseForPreview;
     const pairs = selected.map((t) => `${t!.key}=${'•'.repeat(Math.max(3, t!.value.length || 3))}`);
     return baseForPreview + (baseForPreview.includes('?') ? '&' : '?') + pairs.join('&');
@@ -1001,7 +1003,11 @@ function HttpNodeFields({
             {tags.length === 0 && (
               <span className="text-xs text-[var(--color-neutral-400)]">No tags defined yet.</span>
             )}
-            {tags.map((t) => (
+            {/* The url-from-tag tag is the base URL, never a query param — hide it
+                here so it can't be selected as a query tag (would corrupt the url). */}
+            {tags
+              .filter((t) => !(urlMode === 'tag' && t.id === urlTagId))
+              .map((t) => (
               <label
                 key={t.id}
                 className="flex items-center gap-1 rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-1 text-xs"
