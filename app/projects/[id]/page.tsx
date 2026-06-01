@@ -29,6 +29,7 @@ import {
   FRONTEND_FRAMEWORKS,
   BACKEND_FRAMEWORKS,
   BACKEND_LANGUAGES,
+  suggestTransports,
 } from '@/components/canvas/stackCatalog';
 import { TagsPanel, type Tag } from '@/components/canvas/TagsPanel';
 import {
@@ -1250,6 +1251,10 @@ function ServerNodeFields({
       {/* Mock API routes — define routes this server "serves" so a connected
           function/http node can fire one and get a mock response (no network). */}
       <RoutesEditor node={node} tags={tags} onChange={onChange} />
+
+      {/* Mock realtime events — channel/event + payload a connected node can
+          "subscribe" to and get back in-process (Vercel can't run a socket). */}
+      <RealtimeEditor node={node} tags={tags} onChange={onChange} />
     </div>
   );
 }
@@ -1518,6 +1523,318 @@ function RouteForm({
   );
 }
 
+// ---------- Realtime mock editor (server node) ----------
+// A server node can define mock realtime events (channel + event name + JSON
+// payload). A connected function/http node "subscribes" to one and gets the
+// payload back in-process — Vercel can't run a real socket, so this is a mock.
+interface RealtimeEventDraft {
+  id: string;
+  channel: string;
+  event: string;
+  payload: unknown;
+}
+
+function genEventId(): string {
+  return `e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeEvents(raw: unknown): RealtimeEventDraft[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((e): e is Record<string, unknown> => e != null && typeof e === 'object')
+    .map((e) => ({
+      id: typeof e.id === 'string' && e.id ? e.id : genEventId(),
+      channel: typeof e.channel === 'string' ? e.channel : '',
+      event: typeof e.event === 'string' ? e.event : '',
+      payload: e.payload,
+    }));
+}
+
+const REALTIME_CUSTOM = '__custom__';
+
+function RealtimeEditor({
+  node,
+  tags,
+  onChange,
+}: {
+  node: ApiNode;
+  tags: Tag[];
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  const rt = (cfg.realtime ?? {}) as Record<string, any>;
+  const events = normalizeEvents(rt.events);
+  const transport = String(rt.transport ?? '');
+  const suggestions = suggestTransports({
+    category: cfg.category,
+    language: cfg.language,
+  });
+  const isCustomTransport = transport !== '' && !suggestions.includes(transport);
+  const [customMode, setCustomMode] = useState(isCustomTransport);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const writeRealtime = (patch: Record<string, any>) =>
+    onChange({
+      ...node,
+      config: { ...cfg, realtime: { ...rt, ...patch } },
+    });
+
+  const writeEvents = (next: RealtimeEventDraft[]) => writeRealtime({ events: next });
+
+  const setTransport = (value: string) => {
+    if (value === REALTIME_CUSTOM) {
+      setCustomMode(true);
+      writeRealtime({ transport: '' });
+    } else {
+      setCustomMode(false);
+      writeRealtime({ transport: value });
+    }
+  };
+
+  const addEvent = () => {
+    const e: RealtimeEventDraft = {
+      id: genEventId(),
+      channel: '',
+      event: 'message',
+      payload: {},
+    };
+    writeEvents([...events, e]);
+    setEditingId(e.id);
+  };
+
+  const updateEvent = (id: string, patch: Partial<RealtimeEventDraft>) =>
+    writeEvents(events.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+
+  const deleteEvent = (id: string) => {
+    writeEvents(events.filter((e) => e.id !== id));
+    if (editingId === id) setEditingId(null);
+  };
+
+  const transportSelectValue =
+    customMode || isCustomTransport ? REALTIME_CUSTOM : transport;
+
+  return (
+    <div
+      data-testid="realtime-editor"
+      className="flex flex-col gap-2 rounded-xl border border-[var(--color-neutral-200)] bg-white p-3"
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold uppercase tracking-wide text-[var(--color-neutral-500)]">
+          Realtime
+        </span>
+        <span className="rounded-full bg-[var(--color-neutral-100)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-neutral-600)]">
+          {events.length} event{events.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      <p
+        data-testid="realtime-mock-note"
+        className="rounded-md bg-[var(--color-info)]/10 px-2 py-1 text-[10px] text-[var(--color-info)]"
+      >
+        ⚡ Mock — Vercel can’t run a real socket. Execute returns this payload
+        in-process (resolving {`{{tags}}`}).
+      </p>
+
+      {/* Transport (suggested by stack; custom allowed) */}
+      <div>
+        <label className="mb-1 block text-[11px] font-medium text-[var(--color-neutral-600)]">
+          Transport
+        </label>
+        <select
+          data-testid="realtime-transport"
+          value={transportSelectValue}
+          onChange={(e) => setTransport(e.target.value)}
+          className="w-full rounded-lg border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+        >
+          <option value="">Select transport…</option>
+          {suggestions.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+          <option value={REALTIME_CUSTOM}>+ Custom…</option>
+        </select>
+        {transportSelectValue === REALTIME_CUSTOM && (
+          <input
+            type="text"
+            data-testid="realtime-transport-custom"
+            value={transport}
+            onChange={(e) => writeRealtime({ transport: e.target.value })}
+            placeholder="Custom transport name"
+            className="mt-1.5 w-full rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+          />
+        )}
+      </div>
+
+      {/* Events list */}
+      {events.length === 0 ? (
+        <p className="text-[11px] text-[var(--color-neutral-400)]">
+          No events yet. Add one so a connected node can subscribe and get its mock payload.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {events.map((e) => (
+            <div
+              key={e.id}
+              data-testid="event-row"
+              className="rounded-lg border border-[var(--color-neutral-200)]"
+            >
+              <div className="flex items-center gap-2 px-2 py-1.5">
+                <span className="rounded bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-primary)]">
+                  📡
+                </span>
+                <code className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-neutral-800)]">
+                  {e.event || '(no event)'}
+                  {e.channel ? (
+                    <span className="text-[var(--color-neutral-400)]"> @ {e.channel}</span>
+                  ) : null}
+                </code>
+                <button
+                  type="button"
+                  data-testid="event-edit"
+                  onClick={() => setEditingId(editingId === e.id ? null : e.id)}
+                  className="rounded px-1 text-xs font-medium text-[var(--color-primary)] hover:underline"
+                >
+                  {editingId === e.id ? 'close' : 'edit'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="event-delete"
+                  onClick={() => deleteEvent(e.id)}
+                  className="rounded px-1 text-xs font-medium text-[var(--color-danger)] hover:underline"
+                  aria-label="Delete event"
+                >
+                  ✕
+                </button>
+              </div>
+              {editingId === e.id && (
+                <EventForm event={e} tags={tags} onPatch={(p) => updateEvent(e.id, p)} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        data-testid="event-add"
+        onClick={addEvent}
+        className="self-start rounded-lg border border-dashed border-[var(--color-neutral-300)] px-2 py-1 text-[11px] text-[var(--color-neutral-600)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+      >
+        + add event
+      </button>
+    </div>
+  );
+}
+
+function EventForm({
+  event,
+  tags,
+  onPatch,
+}: {
+  event: RealtimeEventDraft;
+  tags: Tag[];
+  onPatch: (patch: Partial<RealtimeEventDraft>) => void;
+}) {
+  const payloadText =
+    event.payload != null ? JSON.stringify(event.payload, null, 2) : '';
+  const payloadRef = useRef<HTMLTextAreaElement | null>(null);
+  const channelRef = useRef<HTMLInputElement | null>(null);
+
+  const parseMaybeJson = (text: string): unknown => {
+    const t = text.trim();
+    if (!t) return undefined;
+    try {
+      return JSON.parse(t);
+    } catch {
+      return text;
+    }
+  };
+
+  const insertPayloadToken = (key: string) => {
+    const el = payloadRef.current;
+    const token = `{{${key}}}`;
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + token + el.value.slice(end);
+    el.value = next;
+    const caret = start + token.length;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    onPatch({ payload: parseMaybeJson(next) });
+  };
+
+  return (
+    <div
+      data-testid="event-form"
+      className="flex flex-col gap-2 border-t border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] px-2 py-2"
+    >
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-[var(--color-neutral-500)]">
+            Channel (optional)
+          </label>
+          <input
+            ref={channelRef}
+            type="text"
+            value={event.channel}
+            data-testid="event-channel"
+            placeholder="room-{{roomId}}"
+            onChange={(ev) => onPatch({ channel: ev.target.value })}
+            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-[var(--color-neutral-500)]">
+            Event name
+          </label>
+          <input
+            type="text"
+            value={event.event}
+            data-testid="event-name"
+            placeholder="chat:message"
+            onChange={(ev) => onPatch({ event: ev.target.value })}
+            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+          />
+        </div>
+      </div>
+
+      <label className="block text-[10px] font-medium uppercase tracking-wide text-[var(--color-neutral-500)]">
+        Payload (JSON)
+      </label>
+      <textarea
+        ref={payloadRef}
+        rows={4}
+        defaultValue={payloadText}
+        data-testid="event-payload"
+        placeholder='{ "user": "{{username}}", "text": "hello" }'
+        onBlur={(e) => onPatch({ payload: parseMaybeJson(e.target.value) })}
+        className="w-full rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+      />
+      <div className="flex flex-wrap gap-1.5" data-testid="event-payload-tag-picker">
+        {tags.length === 0 ? (
+          <span className="text-[10px] text-[var(--color-neutral-400)]">No tags defined yet.</span>
+        ) : (
+          tags.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => insertPayloadToken(t.key)}
+              data-testid={`event-insert-tag-${t.key}`}
+              className="rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-0.5 font-mono text-[10px] text-[var(--color-neutral-700)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              title={`Insert {{${t.key}}}`}
+            >
+              {'{{'}{t.key}{'}}'}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- Internal call (mock server route) picker ----------
 // Shown for function / http nodes. When the node has an outgoing edge to a
 // server node, the user can switch it to "call a mock route" mode and pick one
@@ -1562,16 +1879,21 @@ function CallRoutePicker({
     );
   }
 
-  // Selected server (default: first target). Routes of that server.
+  // Selected server (default: first target). Routes + realtime events of it.
   const selectedServerId =
     typeof cfg.targetServerId === 'string' &&
     serverTargets.some((s) => s.id === cfg.targetServerId)
       ? (cfg.targetServerId as string)
       : serverTargets[0].id;
   const selectedServer = serverTargets.find((s) => s.id === selectedServerId)!;
-  const routes = normalizeRoutes(
-    (selectedServer.config as Record<string, any> | undefined)?.routes,
-  );
+  const selectedCfg = (selectedServer.config as Record<string, any> | undefined) ?? {};
+  const routes = normalizeRoutes(selectedCfg.routes);
+  const events = normalizeEvents(selectedCfg.realtime?.events);
+  const transport = String(selectedCfg.realtime?.transport ?? '');
+
+  // rest (default) = call a mock route; realtime = subscribe to a mock event.
+  const targetKind: 'rest' | 'realtime' =
+    cfg.targetKind === 'realtime' ? 'realtime' : 'rest';
 
   const currentRouteKey =
     callMode === 'internal'
@@ -1593,6 +1915,7 @@ function CallRoutePicker({
               e.target.checked
                 ? {
                     callMode: 'internal',
+                    targetKind: cfg.targetKind === 'realtime' ? 'realtime' : 'rest',
                     targetServerId: selectedServerId,
                     targetMethod:
                       cfg.targetMethod ?? routes[0]?.method ?? 'GET',
@@ -1602,7 +1925,7 @@ function CallRoutePicker({
             )
           }
         />
-        Call a mock server route
+        Call a mock server (route or realtime)
         <span className="rounded-full bg-[var(--color-primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
           virtual
         </span>
@@ -1627,35 +1950,107 @@ function CallRoutePicker({
             </select>
           )}
 
-          {routes.length === 0 ? (
+          {/* Kind toggle: REST route vs realtime event. */}
+          <div
+            className="flex gap-1 rounded-lg bg-[var(--color-neutral-100)] p-1"
+            data-testid="call-kind-toggle"
+          >
+            {([
+              { id: 'rest', label: 'REST route' },
+              { id: 'realtime', label: 'Realtime event' },
+            ] as { id: 'rest' | 'realtime'; label: string }[]).map((k) => (
+              <button
+                key={k.id}
+                type="button"
+                data-testid={`call-kind-${k.id}`}
+                onClick={() =>
+                  setCfg(
+                    k.id === 'realtime'
+                      ? {
+                          targetKind: 'realtime',
+                          targetEventId: cfg.targetEventId ?? events[0]?.id ?? '',
+                          targetEventName: cfg.targetEventName ?? events[0]?.event ?? '',
+                        }
+                      : { targetKind: 'rest' },
+                  )
+                }
+                className={
+                  'flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition ' +
+                  (targetKind === k.id
+                    ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                    : 'text-[var(--color-neutral-500)] hover:text-[var(--color-neutral-700)]')
+                }
+              >
+                {k.label}
+              </button>
+            ))}
+          </div>
+
+          {targetKind === 'rest' ? (
+            routes.length === 0 ? (
+              <p className="text-[11px] text-[var(--color-warning)]">
+                ⚠ <strong>{selectedServer.name}</strong> has no routes defined. Add routes on that
+                server node first.
+              </p>
+            ) : (
+              <select
+                value={currentRouteKey}
+                data-testid="call-route-select"
+                onChange={(e) => {
+                  const [m, ...rest] = e.target.value.split(' ');
+                  setCfg({
+                    targetServerId: selectedServerId,
+                    targetMethod: m,
+                    targetPath: rest.join(' '),
+                  });
+                }}
+                className="rounded-lg border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+              >
+                <option value="">(select a route)</option>
+                {routes.map((r) => (
+                  <option key={r.id} value={`${r.method} ${r.path}`}>
+                    {r.method} {r.path}
+                  </option>
+                ))}
+              </select>
+            )
+          ) : events.length === 0 ? (
             <p className="text-[11px] text-[var(--color-warning)]">
-              ⚠ <strong>{selectedServer.name}</strong> has no routes defined. Add routes on that
-              server node first.
+              ⚠ <strong>{selectedServer.name}</strong> has no realtime events defined. Add events in
+              the server node’s Realtime section first.
             </p>
           ) : (
-            <select
-              value={currentRouteKey}
-              data-testid="call-route-select"
-              onChange={(e) => {
-                const [m, ...rest] = e.target.value.split(' ');
-                setCfg({
-                  targetServerId: selectedServerId,
-                  targetMethod: m,
-                  targetPath: rest.join(' '),
-                });
-              }}
-              className="rounded-lg border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
-            >
-              <option value="">(select a route)</option>
-              {routes.map((r) => (
-                <option key={r.id} value={`${r.method} ${r.path}`}>
-                  {r.method} {r.path}
-                </option>
-              ))}
-            </select>
+            <>
+              {transport ? (
+                <span className="self-start rounded-full bg-[var(--color-primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                  {transport}
+                </span>
+              ) : null}
+              <select
+                value={typeof cfg.targetEventId === 'string' ? cfg.targetEventId : ''}
+                data-testid="call-event-select"
+                onChange={(e) => {
+                  const ev = events.find((x) => x.id === e.target.value);
+                  setCfg({
+                    targetServerId: selectedServerId,
+                    targetEventId: e.target.value,
+                    targetEventName: ev?.event ?? '',
+                  });
+                }}
+                className="rounded-lg border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+              >
+                <option value="">(select an event)</option>
+                {events.map((ev) => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.event}
+                    {ev.channel ? ` @ ${ev.channel}` : ''}
+                  </option>
+                ))}
+              </select>
+            </>
           )}
           <p className="text-[10px] text-[var(--color-neutral-500)]">
-            Resolved in-process from the mock server — no real network request is made.
+            Resolved in-process from the mock server — no real network/socket is used.
           </p>
         </>
       )}
@@ -1667,6 +2062,37 @@ function CallRoutePicker({
 // Organised into tabs (Request / Headers / Body / Output) so a node with a long
 // config is easy to scan. Each tab renders only its slice of config.
 type HttpTab = 'request' | 'headers' | 'body' | 'preview' | 'output';
+
+// Postman-style body mode. 'raw' is the back-compat default for old nodes.
+type BodyMode = 'raw' | 'form' | 'none';
+
+// A single key/value row in form-body mode.
+interface BodyFormRow {
+  id: string;
+  key: string;
+  value: string;
+  enabled: boolean;
+  // The tag a "add from tag" row references (so we can show the source); null
+  // for hand-typed rows. The actual value is a live {{tagKey}} string.
+  tagId: string | null;
+}
+
+function genBodyRowId(): string {
+  return `b-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeBodyForm(raw: unknown): BodyFormRow[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((r): r is Record<string, unknown> => r != null && typeof r === 'object')
+    .map((r) => ({
+      id: typeof r.id === 'string' && r.id ? r.id : genBodyRowId(),
+      key: typeof r.key === 'string' ? r.key : '',
+      value: typeof r.value === 'string' ? r.value : String(r.value ?? ''),
+      enabled: r.enabled !== false,
+      tagId: typeof r.tagId === 'string' ? r.tagId : null,
+    }));
+}
 
 function HttpNodeFields({
   node,
@@ -1772,6 +2198,59 @@ function HttpNodeFields({
     const ty = t.type ?? 'generic';
     return ty === 'body' || ty === 'generic';
   });
+
+  // ---- Body mode (Postman-style: raw | form | none) ----
+  // Absent => 'raw' (back-compat: old nodes only ever stored config.body).
+  const bodyMode: BodyMode =
+    cfg.bodyMode === 'form' || cfg.bodyMode === 'none' ? cfg.bodyMode : 'raw';
+  const bodyForm = useMemo(() => normalizeBodyForm(cfg.bodyForm), [cfg.bodyForm]);
+
+  const writeBodyForm = (next: BodyFormRow[]) => setCfg({ bodyForm: next });
+
+  const addBodyRow = () =>
+    writeBodyForm([
+      ...bodyForm,
+      { id: genBodyRowId(), key: '', value: '', enabled: true, tagId: null },
+    ]);
+
+  // "Add from tag": new row whose value is a LIVE {{tagKey}} reference (not a
+  // snapshot), key seeded from the tag key.
+  const addBodyRowFromTag = (t: Tag) =>
+    writeBodyForm([
+      ...bodyForm,
+      {
+        id: genBodyRowId(),
+        key: t.key,
+        value: `{{${t.key}}}`,
+        enabled: true,
+        tagId: t.id,
+      },
+    ]);
+
+  const updateBodyRow = (id: string, patch: Partial<BodyFormRow>) =>
+    writeBodyForm(bodyForm.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const removeBodyRow = (id: string) =>
+    writeBodyForm(bodyForm.filter((r) => r.id !== id));
+
+  // Resolved (masked) preview of the assembled form body — mirrors the executor
+  // (enabled rows only, key+value interpolated).
+  const formBodyPreview = useMemo(() => {
+    const maskTags = tags.map((t) => ({ key: t.key, value: maskValue(t) }));
+    const obj: Record<string, string> = {};
+    for (const r of bodyForm) {
+      if (!r.enabled) continue;
+      const k = interpolateTags(r.key.trim(), maskTags).result;
+      if (!k) continue;
+      obj[k] = interpolateTags(r.value, maskTags).result;
+    }
+    try {
+      return JSON.stringify(obj, null, 2);
+    } catch {
+      return '{}';
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bodyForm, tags]);
 
   // Headers textarea ref + token insert (caret splice).
   const headersRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1920,22 +2399,43 @@ function HttpNodeFields({
       }
     }
 
-    // data: interpolateDeep then JSON.stringify — only for non-GET with a body.
+    // data: built per body mode (mirrors the executor) — only for non-GET.
+    //   none -> no data; form -> assemble from enabled rows; raw -> config.body.
     let data: string | undefined;
-    if (!isGet && cfg.body != null && cfg.body !== '') {
-      // Record refs from the raw body (string or stringified object) for warnings.
-      noteRefs(typeof cfg.body === 'string' ? cfg.body : JSON.stringify(cfg.body));
-      if (typeof cfg.body === 'string') {
-        const r = interpolateTags(cfg.body, previewTags);
-        noteMissing(r.missing);
-        data = r.result;
-      } else {
-        const r = interpolateDeep(cfg.body, previewTags);
-        noteMissing(r.missing);
+    if (!isGet && bodyMode !== 'none') {
+      if (bodyMode === 'form') {
+        const obj: Record<string, unknown> = {};
+        for (const row of bodyForm) {
+          if (!row.enabled) continue;
+          noteRefs(row.key);
+          noteRefs(row.value);
+          const kr = interpolateTags(row.key.trim(), previewTags);
+          noteMissing(kr.missing);
+          if (!kr.result) continue;
+          const vr = interpolateTags(row.value, previewTags);
+          noteMissing(vr.missing);
+          obj[kr.result] = vr.result;
+        }
         try {
-          data = JSON.stringify(r.value);
+          data = JSON.stringify(obj);
         } catch {
-          data = String(r.value);
+          data = String(obj);
+        }
+      } else if (cfg.body != null && cfg.body !== '') {
+        // raw mode (and back-compat default).
+        noteRefs(typeof cfg.body === 'string' ? cfg.body : JSON.stringify(cfg.body));
+        if (typeof cfg.body === 'string') {
+          const r = interpolateTags(cfg.body, previewTags);
+          noteMissing(r.missing);
+          data = r.result;
+        } else {
+          const r = interpolateDeep(cfg.body, previewTags);
+          noteMissing(r.missing);
+          try {
+            data = JSON.stringify(r.value);
+          } catch {
+            data = String(r.value);
+          }
         }
       }
     }
@@ -1949,7 +2449,7 @@ function HttpNodeFields({
       missing: Array.from(missingSet),
       emptyTags: Array.from(emptySet),
     };
-  }, [tags, reveal, cfg.url, cfg.headers, cfg.body, method, isGet]);
+  }, [tags, reveal, cfg.url, cfg.headers, cfg.body, method, isGet, bodyMode, bodyForm]);
 
   // Render the config as a copy-pastable JS object literal (axios-style).
   const configText = useMemo(() => {
@@ -2183,24 +2683,174 @@ function HttpNodeFields({
         </div>
       )}
 
-      {/* ---- Body tab ---- */}
+      {/* ---- Body tab (Postman-style: raw / form / none) ---- */}
       {tab === 'body' && (
-        <div data-testid="http-tab-panel-body">
-          <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-600)]">
-            Body (JSON){isGet ? ' — ignored for GET' : ''}
-          </label>
-          <textarea
-            ref={bodyRef}
-            rows={5}
-            placeholder='{ "hello": "{{bodyTag}}" }'
-            defaultValue={bodyText}
-            data-testid="http-body"
-            disabled={isGet}
-            onBlur={(e) => setCfg({ body: parseMaybeJson(e.target.value) })}
-            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none disabled:opacity-50"
-          />
-          {!isGet && (
+        <div data-testid="http-tab-panel-body" className="flex flex-col gap-2">
+          {/* Mode toggle */}
+          <div
+            className="flex gap-1 rounded-lg bg-[var(--color-neutral-100)] p-1"
+            data-testid="body-mode-toggle"
+          >
+            {([
+              { id: 'raw', label: 'raw (JSON)' },
+              { id: 'form', label: 'form (key-value)' },
+              { id: 'none', label: 'none' },
+            ] as { id: BodyMode; label: string }[]).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                data-testid={`body-mode-${m.id}`}
+                disabled={isGet}
+                onClick={() => setCfg({ bodyMode: m.id })}
+                className={
+                  'flex-1 rounded-md px-2 py-1 text-[11px] font-medium transition disabled:opacity-50 ' +
+                  (bodyMode === m.id
+                    ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                    : 'text-[var(--color-neutral-500)] hover:text-[var(--color-neutral-700)]')
+                }
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
+          {isGet ? (
+            <p className="rounded-lg bg-[var(--color-neutral-100)] px-3 py-2 text-[11px] text-[var(--color-neutral-500)]">
+              GET requests don’t send a body.
+            </p>
+          ) : bodyMode === 'none' ? (
+            <p
+              data-testid="body-none-note"
+              className="rounded-lg bg-[var(--color-neutral-100)] px-3 py-3 text-center text-[11px] text-[var(--color-neutral-500)]"
+            >
+              No body will be sent with this request.
+            </p>
+          ) : bodyMode === 'form' ? (
+            <div className="flex flex-col gap-2" data-testid="body-form">
+              {bodyForm.length === 0 ? (
+                <p className="text-[11px] text-[var(--color-neutral-400)]">
+                  No fields yet. Add a key/value row, or add one from a tag.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {bodyForm.map((row) => (
+                    <div
+                      key={row.id}
+                      data-testid="body-form-row"
+                      data-row-key={row.key}
+                      className="flex items-center gap-1.5"
+                    >
+                      <input
+                        type="checkbox"
+                        data-testid={`body-row-enabled-${row.key}`}
+                        checked={row.enabled}
+                        onChange={(e) => updateBodyRow(row.id, { enabled: e.target.checked })}
+                        title={row.enabled ? 'Enabled — included in body' : 'Disabled — skipped'}
+                      />
+                      <input
+                        type="text"
+                        value={row.key}
+                        data-testid="body-row-key"
+                        placeholder="key"
+                        onChange={(e) => updateBodyRow(row.id, { key: e.target.value })}
+                        className="min-w-0 flex-1 rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        value={row.value}
+                        data-testid="body-row-value"
+                        placeholder="value or {{tag}}"
+                        onChange={(e) =>
+                          updateBodyRow(row.id, { value: e.target.value, tagId: null })
+                        }
+                        className="min-w-0 flex-1 rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+                      />
+                      {/* ↹tag: replace this row's value with a live {{tag}} ref */}
+                      <select
+                        value=""
+                        data-testid={`body-row-tag-${row.key}`}
+                        onChange={(e) => {
+                          const t = tags.find((x) => x.id === e.target.value);
+                          if (t)
+                            updateBodyRow(row.id, { value: `{{${t.key}}}`, tagId: t.id });
+                        }}
+                        className="shrink-0 rounded-lg border border-[var(--color-neutral-300)] bg-white px-1 py-1.5 text-[11px] focus:border-[var(--color-primary)] focus:outline-none"
+                        title="Insert a tag reference as the value"
+                      >
+                        <option value="">↹</option>
+                        {tags.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.key}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        data-testid={`body-row-remove-${row.key}`}
+                        onClick={() => removeBodyRow(row.id)}
+                        className="shrink-0 rounded px-1 text-xs text-[var(--color-danger)] hover:underline"
+                        aria-label="Remove row"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid="body-row-add"
+                  onClick={addBodyRow}
+                  className="rounded-lg border border-dashed border-[var(--color-neutral-300)] px-2 py-1 text-[11px] text-[var(--color-neutral-600)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                >
+                  + add field
+                </button>
+                {/* Add a row whose value is a LIVE {{tagKey}} reference. */}
+                <select
+                  value=""
+                  data-testid="body-add-from-tag"
+                  onChange={(e) => {
+                    const t = tags.find((x) => x.id === e.target.value);
+                    if (t) addBodyRowFromTag(t);
+                  }}
+                  className="rounded-lg border border-[var(--color-neutral-300)] bg-white px-2 py-1 text-[11px] text-[var(--color-neutral-600)] focus:border-[var(--color-primary)] focus:outline-none"
+                >
+                  <option value="">+ add from tag…</option>
+                  {tags.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.key}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mt-1 rounded-lg bg-[var(--color-neutral-900)] p-2">
+                <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+                  Resolved body
+                </p>
+                <pre
+                  data-testid="body-form-preview"
+                  className="whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--color-neutral-300)]"
+                >
+                  {formBodyPreview}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            /* raw mode (default) */
             <>
+              <textarea
+                ref={bodyRef}
+                rows={5}
+                placeholder='{ "hello": "{{bodyTag}}" }'
+                defaultValue={bodyText}
+                key={bodyText}
+                data-testid="http-body"
+                onBlur={(e) => setCfg({ body: parseMaybeJson(e.target.value) })}
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+              />
               <p className="mt-1 text-[10px] text-[var(--color-neutral-500)]">
                 Insert a tag with <code className="font-mono">{'{{tagKey}}'}</code>. Click a tag
                 below to insert it at the cursor.

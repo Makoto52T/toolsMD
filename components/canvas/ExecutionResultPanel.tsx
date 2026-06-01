@@ -36,6 +36,17 @@ export interface ExecMockMeta {
   durationMs: number;
 }
 
+// Mirrors lib/node-executor.ts RealtimeMeta (internal mock realtime event).
+export interface ExecRealtimeMeta {
+  virtual: true;
+  serverNodeId: string;
+  serverNodeName?: string;
+  transport: string;
+  channel?: string;
+  event: string;
+  durationMs: number;
+}
+
 export interface ExecResult {
   nodeId: string;
   nodeName?: string;
@@ -46,6 +57,7 @@ export interface ExecResult {
   http?: ExecHttpMeta;
   server?: ExecServerMeta;
   mock?: ExecMockMeta;
+  realtime?: ExecRealtimeMeta;
 }
 
 export interface MissingBinding {
@@ -302,6 +314,7 @@ function ResultCard({
   const http = result.http;
   const server = result.server;
   const mock = result.mock;
+  const realtime = result.realtime;
   const ok = result.status === 'success';
   return (
     <div className="rounded-xl border border-[var(--color-neutral-200)] bg-white">
@@ -327,6 +340,18 @@ function ResultCard({
           ) : null}
           {mock ? (
             <span className="text-xs text-[var(--color-neutral-500)]">{mock.durationMs} ms</span>
+          ) : null}
+          {realtime ? (
+            <span
+              data-testid="realtime-virtual-badge"
+              className="inline-flex items-center rounded-full bg-[var(--color-primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+              title="Resolved from a mock realtime event — no real socket was opened."
+            >
+              📡 virtual / {realtime.transport || 'realtime'}
+            </span>
+          ) : null}
+          {realtime ? (
+            <span className="text-xs text-[var(--color-neutral-500)]">{realtime.durationMs} ms</span>
           ) : null}
           {http ? (
             <span className="text-xs text-[var(--color-neutral-500)]">{http.durationMs} ms</span>
@@ -386,6 +411,21 @@ function ResultCard({
             <span className="font-mono">{mock.path}</span>{' '}
             <span className="text-[var(--color-neutral-400)]">
               → mock {mock.serverNodeName ?? 'server'} (HTTP {mock.statusCode})
+            </span>
+          </div>
+        ) : null}
+
+        {/* Realtime line — mock event emitted in-process, no socket. */}
+        {realtime ? (
+          <div className="truncate text-xs text-[var(--color-neutral-500)]" data-testid="realtime-emit-line">
+            <span className="font-mono font-semibold text-[var(--color-primary)]">
+              📡 {realtime.event}
+            </span>{' '}
+            {realtime.channel ? (
+              <span className="font-mono">@ {realtime.channel}</span>
+            ) : null}{' '}
+            <span className="text-[var(--color-neutral-400)]">
+              → {realtime.transport || 'realtime'} on {realtime.serverNodeName ?? 'server'} (mock)
             </span>
           </div>
         ) : null}

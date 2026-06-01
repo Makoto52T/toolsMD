@@ -79,6 +79,29 @@ export interface MockRoute {
   response?: unknown;
 }
 
+// Present when a function/http node "subscribed" to a *mock* realtime event on
+// a server node (targetKind === 'realtime'). Vercel can't hold a real socket,
+// so the server node defines a channel/event + mock payload and the caller gets
+// that payload back in-process — same idea as MockMeta but for realtime.
+export interface RealtimeMeta {
+  virtual: true;
+  serverNodeId: string;
+  serverNodeName?: string;
+  transport: string;
+  channel?: string;
+  event: string;
+  durationMs: number;
+}
+
+// A single mock realtime event defined on a server node
+// (node.config.realtime.events[]).
+export interface MockEvent {
+  id?: string;
+  channel?: string;
+  event: string;
+  payload?: unknown;
+}
+
 export interface ExecutionResult {
   nodeId: string;
   nodeName?: string;
@@ -93,6 +116,8 @@ export interface ExecutionResult {
   server?: ServerMeta;
   // Present when the node resolved against a mock server route (no real network).
   mock?: MockMeta;
+  // Present when the node subscribed to a mock realtime event (no real socket).
+  realtime?: RealtimeMeta;
 }
 
 // Hard cap so a hung endpoint can't keep a serverless invocation alive forever.
@@ -147,6 +172,16 @@ function routesOf(node: PlannerNode | undefined): MockRoute[] {
   );
 }
 
+// Pull the mock realtime events off a server node's config, defensively.
+function eventsOf(node: PlannerNode | undefined): MockEvent[] {
+  const raw = node?.config?.realtime?.events;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (e): e is MockEvent =>
+      e != null && typeof e === 'object' && typeof (e as any).event === 'string',
+  );
+}
+
 // Resolve which server node a function/http node should call. Preference order:
 //   1. an explicit config.targetServerId (set by the UI when the user picks a
 //      route), as long as it's a server node reachable by an edge.
@@ -188,6 +223,56 @@ function executeInternalCall(
       error: 'Internal call: this node is not connected to a server node.',
     };
   }
+
+  // ---- Realtime mock branch ----
+  // The caller "subscribed" to one of the server's mock realtime events. We
+  // can't hold a real socket on Vercel, so resolve the event's mock payload
+  // in-process (interpolating {{tag}}) and return it — bindings/chain work just
+  // like a REST mock.
+  if (node.config?.targetKind === 'realtime') {
+    const transport = String(server.config?.realtime?.transport ?? 'socketio');
+    const events = eventsOf(server);
+    const wantId = node.config?.targetEventId;
+    const match =
+      (typeof wantId === 'string' && wantId
+        ? events.find((e) => e.id === wantId)
+        : undefined) ?? undefined;
+    if (!match) {
+      return {
+        nodeId: node.id,
+        status: 'error',
+        error: `Realtime event not defined on ${server.name}.`,
+        realtime: {
+          virtual: true,
+          serverNodeId: server.id,
+          serverNodeName: server.name,
+          transport,
+          event: String(node.config?.targetEventName ?? '(unknown)'),
+          durationMs: Date.now() - started,
+        },
+      };
+    }
+    const channel =
+      typeof match.channel === 'string' && match.channel
+        ? interpolateTags(match.channel, tags).result
+        : undefined;
+    const output = interpolateDeep(match.payload ?? null, tags).value;
+    return {
+      nodeId: node.id,
+      status: 'success',
+      output,
+      realtime: {
+        virtual: true,
+        serverNodeId: server.id,
+        serverNodeName: server.name,
+        transport,
+        channel,
+        event: match.event,
+        durationMs: Date.now() - started,
+      },
+    };
+  }
+
   const wantMethod = String(node.config?.targetMethod ?? 'GET').toUpperCase();
   const wantPath = normalizePath(node.config?.targetPath ?? '/');
   const routes = routesOf(server);
@@ -356,6 +441,13 @@ export async function executeNode(
           method = 'GET',
           headers = {},
           body,
+          // Body editor mode (Postman-style). Absent => 'raw' (back-compat: old
+          // nodes only ever stored `body`).
+          //   'raw'  -> config.body (JSON text / object, interpolated)
+          //   'form' -> config.bodyForm rows assembled into an object
+          //   'none' -> no body sent
+          bodyMode,
+          bodyForm,
           // Legacy config (pre-URL-builder). Still honoured so old nodes don't
           // break after deploy, but no UI produces these any more.
           applyTagQuery = false,
@@ -458,28 +550,61 @@ export async function executeNode(
           }
         }
 
-        // ---- Build request body, merging tagBody (ignored for GET) ----
-        // GET requests have no body, so tagBody is intentionally ignored.
-        let finalBody: any = body;
-        if (applyTagBody && httpMethod !== 'GET') {
-          const bTags = resolveTags(tagBody, tags);
-          if (bTags.length > 0) {
-            const base =
-              body && typeof body === 'object' && !Array.isArray(body) ? { ...body } : {};
-            for (const t of bTags) {
-              // Don't clobber keys the user typed explicitly into the body.
-              if (!(t.key in base)) base[t.key] = t.value;
-            }
-            finalBody = base;
-          }
-        }
+        // ---- Build request body (Postman-style modes) ----
+        // GET requests carry no body, so all of this is skipped for GET.
+        //   mode 'none' -> no body
+        //   mode 'form' -> assemble an object from enabled key/value rows
+        //   mode 'raw' / default -> config.body (legacy + back-compat)
+        const resolvedBodyMode: 'raw' | 'form' | 'none' =
+          bodyMode === 'form' || bodyMode === 'none' ? bodyMode : 'raw';
 
-        // ---- n8n-style {{tag}} interpolation inside the body ----
-        // Substitutes any {{tag}} placeholder in string values of the body
-        // (e.g. { "token": "Bearer {{access_token}}" }). Runs after tagBody so
-        // explicitly-typed placeholders win over auto-injected key/value tags.
-        if (httpMethod !== 'GET' && finalBody != null) {
-          finalBody = interpolateDeep(finalBody, tags).value;
+        let finalBody: any;
+        if (httpMethod === 'GET' || resolvedBodyMode === 'none') {
+          finalBody = undefined;
+        } else if (resolvedBodyMode === 'form') {
+          // Each enabled row contributes one key/value pair; both key and value
+          // are interpolated so a row value of "{{access_token}}" resolves live.
+          const obj: Record<string, unknown> = {};
+          if (Array.isArray(bodyForm)) {
+            for (const row of bodyForm) {
+              if (!row || typeof row !== 'object') continue;
+              if ((row as any).enabled === false) continue; // unchecked => skip
+              const rawKey = String((row as any).key ?? '').trim();
+              if (!rawKey) continue;
+              const key = interpolateTags(rawKey, tags).result;
+              const rawVal = (row as any).value;
+              const val =
+                typeof rawVal === 'string'
+                  ? interpolateTags(rawVal, tags).result
+                  : rawVal;
+              obj[key] = val;
+            }
+          }
+          finalBody = obj;
+        } else {
+          // raw mode (also the back-compat default for old nodes).
+          finalBody = body;
+          // Legacy tagBody merge — only old configs still carry this.
+          if (applyTagBody) {
+            const bTags = resolveTags(tagBody, tags);
+            if (bTags.length > 0) {
+              const base =
+                body && typeof body === 'object' && !Array.isArray(body)
+                  ? { ...body }
+                  : {};
+              for (const t of bTags) {
+                // Don't clobber keys the user typed explicitly into the body.
+                if (!(t.key in base)) base[t.key] = t.value;
+              }
+              finalBody = base;
+            }
+          }
+          // ---- n8n-style {{tag}} interpolation inside the raw body ----
+          // Substitutes any {{tag}} placeholder in string values of the body
+          // (e.g. { "token": "Bearer {{access_token}}" }).
+          if (finalBody != null) {
+            finalBody = interpolateDeep(finalBody, tags).value;
+          }
         }
 
         // ---- n8n-style {{tag}} interpolation in header values ----

@@ -24,10 +24,13 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   const port = isServer && cfg.port != null && cfg.port !== '' ? String(cfg.port) : '';
   const routeCount =
     isServer && Array.isArray(cfg.routes) ? cfg.routes.length : 0;
+  const eventCount =
+    isServer && Array.isArray(cfg.realtime?.events) ? cfg.realtime.events.length : 0;
   // A function/http node firing a mock route shows a small "mock" hint.
   const isInternalCall =
     (data.type === 'function' || data.type === 'http-request') &&
     cfg.callMode === 'internal';
+  const isRealtimeCall = isInternalCall && cfg.targetKind === 'realtime';
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
 
   // Four connection handles (top/bottom/left/right). With ConnectionMode.Loose
@@ -76,7 +79,7 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
         </div>
       </div>
 
-      {isServer && (framework || port) ? (
+      {isServer && (framework || port || routeCount > 0 || eventCount > 0) ? (
         <div className="flex flex-wrap items-center gap-1 px-3 pt-2">
           {framework ? (
             <span
@@ -99,6 +102,14 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
               {routeCount} route{routeCount === 1 ? '' : 's'}
             </span>
           ) : null}
+          {eventCount > 0 ? (
+            <span
+              data-testid="event-count-badge"
+              className="rounded-md bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-medium text-white"
+            >
+              📡 {eventCount} event{eventCount === 1 ? '' : 's'}
+            </span>
+          ) : null}
         </div>
       ) : null}
 
@@ -108,7 +119,9 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             data-testid="mock-call-badge"
             className="rounded-md bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
           >
-            ⚡ mock: {String(cfg.targetMethod ?? 'GET')} {String(cfg.targetPath ?? '/')}
+            {isRealtimeCall
+              ? `📡 mock: ${String(cfg.targetEventName ?? cfg.targetEventId ?? 'event')}`
+              : `⚡ mock: ${String(cfg.targetMethod ?? 'GET')} ${String(cfg.targetPath ?? '/')}`}
           </span>
         </div>
       ) : null}

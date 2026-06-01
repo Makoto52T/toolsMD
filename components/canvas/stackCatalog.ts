@@ -43,6 +43,38 @@ export const LANGUAGE_ICONS: Record<string, string> = {
 
 export const FRONTEND_ICON = '▲';
 
+// ---- Realtime transports (server node "Realtime" section) ----
+// Suggested transports per backend language (frontend servers default to the
+// JS list). The user can always type a custom transport not in the list.
+export const REALTIME_TRANSPORTS_BY_LANGUAGE: Record<string, string[]> = {
+  JavaScript: ['Socket.io', 'ws', 'Pusher', 'SSE'],
+  Python: ['Channels', 'WebSockets', 'Pusher'],
+  'Java/Kotlin': ['STOMP/WebSocket', 'SockJS'],
+  PHP: ['Pusher', 'Laravel Reverb', 'Echo'],
+  'C#': ['SignalR'],
+  Go: ['gorilla/ws', 'WebSocket', 'Centrifugo'],
+  Rust: ['tokio-tungstenite', 'WebSocket'],
+  Ruby: ['ActionCable', 'Pusher'],
+};
+
+// All distinct transports across languages (deduped) — used as the fallback /
+// full picklist when no language is selected.
+export const REALTIME_TRANSPORTS = Array.from(
+  new Set(Object.values(REALTIME_TRANSPORTS_BY_LANGUAGE).flat()),
+);
+
+// Suggested transports for a server node, by category/language. Frontend or an
+// unknown language falls back to the JS-flavoured list (most common on canvas).
+export function suggestTransports(cfg: {
+  category?: string;
+  language?: string;
+}): string[] {
+  if (cfg.category === 'backend' && cfg.language && REALTIME_TRANSPORTS_BY_LANGUAGE[cfg.language]) {
+    return REALTIME_TRANSPORTS_BY_LANGUAGE[cfg.language];
+  }
+  return REALTIME_TRANSPORTS_BY_LANGUAGE.JavaScript;
+}
+
 // Resolve the glyph to show on a server node from its config.
 export function serverIcon(cfg: {
   category?: string;
