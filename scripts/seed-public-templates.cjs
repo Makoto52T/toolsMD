@@ -245,11 +245,12 @@ function mockServer() {
         description: 'Calls the mock server route in-process (callMode: internal).',
         x: 80,
         y: 280,
+        // Internal calls match a mock route by config.targetMethod +
+        // config.targetPath (NOT method/url, which drive real HTTP requests).
         config: {
           callMode: 'internal',
-          method: 'GET',
-          url: '/users',
-          bodyMode: 'none',
+          targetMethod: 'GET',
+          targetPath: '/users',
         },
       },
       {
@@ -261,10 +262,8 @@ function mockServer() {
         y: 280,
         config: {
           callMode: 'internal',
-          method: 'POST',
-          url: '/login',
-          bodyMode: 'raw',
-          body: { username: 'demo', password: 'demo' },
+          targetMethod: 'POST',
+          targetPath: '/login',
         },
       },
     ],
@@ -284,7 +283,9 @@ function tagBuilder() {
     tags: [
       { key: 'api_host', value: 'postman-echo.com', type: 'domain' },
       { key: 'endpoint', value: '/get', type: 'pathname' },
-      { key: 'q', value: 'hello', type: 'param' },
+      // A param tag's VALUE is the full key=value query fragment (the URL builder
+      // appends it verbatim); the `key` field is just a human label.
+      { key: 'q', value: 'q=hello', type: 'param' },
       { key: 'note', value: 'tags are typed', type: 'body' },
     ],
     nodes: [
