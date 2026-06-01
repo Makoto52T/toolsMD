@@ -26,6 +26,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { sourceNodeId, targetNodeId, label } = await request.json();
   const edge = await store.addEdge(id, sourceNodeId, targetNodeId, label);
+  if (!edge) {
+    return NextResponse.json(
+      { error: 'Both source and target must be existing nodes in this project' },
+      { status: 400 },
+    );
+  }
 
   return NextResponse.json(edge, { status: 201 });
 }

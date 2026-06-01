@@ -102,12 +102,23 @@ export const store = {
   // User operations
   createUser: async (email: string, name: string): Promise<User> => {
     const id = randomUUID();
-    await pool.execute('INSERT INTO users (id, email, name) VALUES (?, ?, ?)', [
-      id,
-      email,
-      name,
-    ]);
-    return { id, email, name };
+    try {
+      await pool.execute('INSERT INTO users (id, email, name) VALUES (?, ?, ?)', [
+        id,
+        email,
+        name,
+      ]);
+      return { id, email, name };
+    } catch (e: any) {
+      // Concurrent logins with the same email race between getUserByEmail and
+      // this INSERT; the UNIQUE(email) constraint then throws ER_DUP_ENTRY on
+      // the loser. Treat that as "already created" and return the winner's row.
+      if (e?.code === 'ER_DUP_ENTRY') {
+        const existing = await store.getUserByEmail(email);
+        if (existing) return existing;
+      }
+      throw e;
+    }
   },
 
   getUserByEmail: async (email: string): Promise<User | undefined> => {
@@ -277,6 +288,16 @@ export const store = {
       [projectId]
     );
     if (!proj[0]) return null;
+
+    // Both endpoints must be real nodes in THIS project — otherwise we'd persist
+    // an orphan edge (e.g. pointing at a deleted/non-existent node) that the
+    // canvas can never render. Guard at the data layer.
+    const [endpoints] = await pool.query<RowDataPacket[]>(
+      'SELECT id FROM nodes WHERE project_id = ? AND id IN (?, ?)',
+      [projectId, sourceNodeId, targetNodeId]
+    );
+    const ids = new Set(endpoints.map((n) => n.id));
+    if (!ids.has(sourceNodeId) || !ids.has(targetNodeId)) return null;
 
     const id = randomUUID();
     await pool.execute(
