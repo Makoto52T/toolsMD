@@ -2233,25 +2233,6 @@ function HttpNodeFields({
   const removeBodyRow = (id: string) =>
     writeBodyForm(bodyForm.filter((r) => r.id !== id));
 
-  // Resolved (masked) preview of the assembled form body — mirrors the executor
-  // (enabled rows only, key+value interpolated).
-  const formBodyPreview = useMemo(() => {
-    const maskTags = tags.map((t) => ({ key: t.key, value: maskValue(t) }));
-    const obj: Record<string, string> = {};
-    for (const r of bodyForm) {
-      if (!r.enabled) continue;
-      const k = interpolateTags(r.key.trim(), maskTags).result;
-      if (!k) continue;
-      obj[k] = interpolateTags(r.value, maskTags).result;
-    }
-    try {
-      return JSON.stringify(obj, null, 2);
-    } catch {
-      return '{}';
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bodyForm, tags]);
-
   // Headers textarea ref + token insert (caret splice).
   const headersRef = useRef<HTMLTextAreaElement | null>(null);
   const insertTagToken = (key: string) => {
@@ -2289,6 +2270,26 @@ function HttpNodeFields({
     t.type === 'param' || t.type === 'generic'
       ? '•'.repeat(Math.max(3, Math.min(8, t.value.length || 3)))
       : t.value;
+
+  // Resolved (masked) preview of the assembled form body — mirrors the executor
+  // (enabled rows only, key+value interpolated). Defined after maskValue so the
+  // useMemo factory doesn't close over it before initialization (TDZ).
+  const formBodyPreview = useMemo(() => {
+    const maskTags = tags.map((t) => ({ key: t.key, value: maskValue(t) }));
+    const obj: Record<string, string> = {};
+    for (const r of bodyForm) {
+      if (!r.enabled) continue;
+      const k = interpolateTags(r.key.trim(), maskTags).result;
+      if (!k) continue;
+      obj[k] = interpolateTags(r.value, maskTags).result;
+    }
+    try {
+      return JSON.stringify(obj, null, 2);
+    } catch {
+      return '{}';
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bodyForm, tags]);
 
   // ---- Resolved URL preview (masked + auto-scheme, mirrors the executor) ----
   const urlPreview = (() => {
