@@ -30,6 +30,14 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
     cfg.callMode === 'internal';
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
 
+  // Four connection handles (top/bottom/left/right). With ConnectionMode.Loose
+  // on the canvas, every handle works as BOTH source and target — the edge's
+  // direction is decided by drag order (first dragged out = source, released =
+  // target), not by the handle's `type`. We still declare type="source" so a
+  // freshly dropped node can initiate a drag from any side.
+  const handleStyle = { background: meta.color };
+  const handleClass = '!h-3 !w-3 !border-2 !border-white';
+
   return (
     <div
       className={[
@@ -39,10 +47,18 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
       style={{ borderColor: selected ? meta.color : '#e2e8f0' }}
     >
       <Handle
-        type="target"
+        id="top"
+        type="source"
+        position={Position.Top}
+        className={handleClass}
+        style={handleStyle}
+      />
+      <Handle
+        id="left"
+        type="source"
         position={Position.Left}
-        className="!h-3 !w-3 !border-2 !border-white"
-        style={{ background: meta.color }}
+        className={handleClass}
+        style={handleStyle}
       />
 
       <div
@@ -137,10 +153,18 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
       </div>
 
       <Handle
+        id="right"
         type="source"
         position={Position.Right}
-        className="!h-3 !w-3 !border-2 !border-white"
-        style={{ background: meta.color }}
+        className={handleClass}
+        style={handleStyle}
+      />
+      <Handle
+        id="bottom"
+        type="source"
+        position={Position.Bottom}
+        className={handleClass}
+        style={handleStyle}
       />
     </div>
   );

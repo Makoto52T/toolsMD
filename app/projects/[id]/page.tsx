@@ -9,6 +9,7 @@ import ReactFlow, {
   MiniMap,
   applyNodeChanges,
   Connection,
+  ConnectionMode,
   Edge as RFEdge,
   Node as RFNode,
   NodeChange,
@@ -685,6 +686,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             edges={rfEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            connectionMode={ConnectionMode.Loose}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
             onEdgesDelete={onEdgesDelete}
