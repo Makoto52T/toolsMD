@@ -41,11 +41,8 @@ import {
 import {
   interpolateTags,
   hasTagPlaceholder,
-  buildUrlFromParts,
   detectTagType,
-  type TagType,
 } from '@/lib/path-utils';
-import { TAG_TYPE_META } from '@/components/canvas/TagsPanel';
 
 interface Project {
   id: string;
@@ -1664,6 +1661,10 @@ function CallRoutePicker({
 }
 
 // ---------- HTTP node config fields (Edit Node modal) ----------
+// Organised into tabs (Request / Headers / Body / Output) so a node with a long
+// config is easy to scan. Each tab renders only its slice of config.
+type HttpTab = 'request' | 'headers' | 'body' | 'output';
+
 function HttpNodeFields({
   node,
   tags,
@@ -1675,46 +1676,82 @@ function HttpNodeFields({
 }) {
   const cfg = (node.config ?? {}) as Record<string, any>;
   const method = String(cfg.method ?? 'GET').toUpperCase();
-  const url = String(cfg.url ?? '');
-  // URL source: 'manual' = typed url, 'builder' = assembled from ordered tags.
-  // Back-compat: a legacy config with urlMode==='tag' / a bare urlTagId is
-  // surfaced as the builder with that single tag as the first (domain) part.
-  const legacyUrlTagId = String(cfg.urlTagId ?? '');
-  const urlMode: 'manual' | 'builder' =
-    cfg.urlMode === 'builder' ||
-    cfg.urlMode === 'tag' ||
-    (cfg.urlMode == null && legacyUrlTagId)
-      ? 'builder'
-      : 'manual';
-  // Ordered list of tag ids that make up the URL. Back-fill from a legacy single
-  // urlTagId so old nodes keep working in the new builder.
-  const urlParts: string[] = Array.isArray(cfg.urlParts)
-    ? cfg.urlParts.filter((x: unknown): x is string => typeof x === 'string')
-    : legacyUrlTagId
-    ? [legacyUrlTagId]
-    : [];
   const isGet = method === 'GET';
 
-  // headers / body are edited as raw JSON text; keep them stringified for the box.
-  const headersText =
-    cfg.headers != null ? JSON.stringify(cfg.headers, null, 2) : '';
-  const bodyText = cfg.body != null ? JSON.stringify(cfg.body, null, 2) : '';
+  const [tab, setTab] = useState<HttpTab>('request');
 
   const setCfg = (patch: Record<string, any>) =>
     onChange({ ...node, config: { ...cfg, ...patch } });
 
-  // Tag pools by role for the builder dropdowns.
-  const domainTags = tags.filter((t) => (t.type ?? 'generic') === 'domain');
-  const pathOrParamTags = tags.filter((t) => {
-    const ty = t.type ?? 'generic';
-    return ty === 'pathname' || ty === 'param';
-  });
-  // Body picker shows only body + generic tags (domain/pathname/param don't
-  // belong inside a JSON body string).
-  const bodyPickerTags = tags.filter((t) => {
-    const ty = t.type ?? 'generic';
-    return ty === 'body' || ty === 'generic';
-  });
+  // ---- URL: a single text field with {{tag}} interpolation (like a header) ----
+  // Back-compat: older nodes stored the URL three different ways —
+  //   * urlMode==='builder' / urlParts: an ordered list of typed-tag ids
+  //   * urlMode==='tag' / a bare urlTagId: a single tag id
+  //   * urlMode==='manual' / config.url: a plain typed string
+  // We migrate the first two shapes into a plain `{{tagKey}}` text url ONCE on
+  // mount (so the user can keep editing it as text), then drop the legacy keys.
+  const byId = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags]);
+  const migratedRef = useRef(false);
+  useEffect(() => {
+    if (migratedRef.current) return;
+    // Already a plain text url (new shape) — nothing to migrate.
+    const hasText = typeof cfg.url === 'string' && cfg.url !== '';
+    const legacyParts: string[] = Array.isArray(cfg.urlParts)
+      ? cfg.urlParts.filter((x: unknown): x is string => typeof x === 'string')
+      : [];
+    const legacyTagId = typeof cfg.urlTagId === 'string' ? cfg.urlTagId : '';
+    const isLegacyBuilder =
+      !hasText &&
+      (legacyParts.length > 0 ||
+        cfg.urlMode === 'builder' ||
+        cfg.urlMode === 'tag' ||
+        !!legacyTagId);
+    if (!isLegacyBuilder) {
+      migratedRef.current = true;
+      return;
+    }
+    // Rebuild a `{{tagKey}}` text url from the ordered tag ids. Prefer urlParts;
+    // fall back to a single urlTagId.
+    const ids = legacyParts.length > 0 ? legacyParts : legacyTagId ? [legacyTagId] : [];
+    const text = ids
+      .map((pid) => {
+        const t = byId.get(pid);
+        return t ? `{{${t.key}}}` : '';
+      })
+      .filter(Boolean)
+      .join('');
+    migratedRef.current = true;
+    // Drop legacy keys so the executor + UI use the new text shape only.
+    const next: Record<string, any> = { ...cfg, url: text };
+    delete next.urlMode;
+    delete next.urlParts;
+    delete next.urlTagId;
+    onChange({ ...node, config: next });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const url = String(cfg.url ?? '');
+
+  // URL textarea/input is uncontrolled (defaultValue + onBlur) so a tag-picker
+  // chip can splice {{key}} at the caret without fighting React state.
+  const urlRef = useRef<HTMLInputElement | null>(null);
+  const insertUrlToken = (key: string) => {
+    const el = urlRef.current;
+    const token = `{{${key}}}`;
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + token + el.value.slice(end);
+    el.value = next;
+    const caret = start + token.length;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    setCfg({ url: next });
+  };
+
+  // headers / body are edited as raw JSON text.
+  const headersText = cfg.headers != null ? JSON.stringify(cfg.headers, null, 2) : '';
+  const bodyText = cfg.body != null ? JSON.stringify(cfg.body, null, 2) : '';
 
   const parseMaybeJson = (text: string): any => {
     const t = text.trim();
@@ -1722,43 +1759,18 @@ function HttpNodeFields({
     try {
       return JSON.parse(t);
     } catch {
-      return text; // keep raw; preview will reflect it
+      return text;
     }
   };
 
-  const byId = new Map(tags.map((t) => [t.id, t]));
+  // Body picker shows only body + generic tags (domain/pathname/param don't
+  // belong inside a JSON body string).
+  const bodyPickerTags = tags.filter((t) => {
+    const ty = t.type ?? 'generic';
+    return ty === 'body' || ty === 'generic';
+  });
 
-  // ---- URL builder part mutators (operate on the urlParts id array) ----
-  const setParts = (next: string[]) => setCfg({ urlMode: 'builder', urlParts: next });
-  const setPartAt = (i: number, id: string) =>
-    setParts(urlParts.map((p, idx) => (idx === i ? id : p)));
-  const addPart = () => {
-    // First part defaults to a domain tag (required); later parts to the first
-    // available path/param tag.
-    const def =
-      urlParts.length === 0
-        ? domainTags[0]?.id ?? ''
-        : pathOrParamTags[0]?.id ?? '';
-    setParts([...urlParts, def]);
-  };
-  const removePart = (i: number) => setParts(urlParts.filter((_, idx) => idx !== i));
-  const movePart = (i: number, dir: -1 | 1) => {
-    // Domain is locked to index 0; never let a swap displace it.
-    const j = i + dir;
-    if (j < 1 || j >= urlParts.length || i < 1) return; // index 0 stays put
-    const next = [...urlParts];
-    [next[i], next[j]] = [next[j], next[i]];
-    setParts(next);
-  };
-
-  // Resolved (value, type) for each part — drives preview + validation.
-  const resolvedParts = urlParts.map((pid) => byId.get(pid)).filter(Boolean) as Tag[];
-  const firstPartType = resolvedParts[0]?.type ?? null;
-  const urlBuilderValid =
-    urlMode !== 'builder' || (resolvedParts.length > 0 && firstPartType === 'domain');
-
-  // Headers textarea is uncontrolled (defaultValue + onBlur). Keep a ref so the
-  // tag-picker chips can splice `{{key}}` in at the caret and persist via setCfg.
+  // Headers textarea ref + token insert (caret splice).
   const headersRef = useRef<HTMLTextAreaElement | null>(null);
   const insertTagToken = (key: string) => {
     const el = headersRef.current;
@@ -1768,14 +1780,12 @@ function HttpNodeFields({
     const end = el.selectionEnd ?? el.value.length;
     const next = el.value.slice(0, start) + token + el.value.slice(end);
     el.value = next;
-    // Restore caret just after the inserted token and refocus.
     const caret = start + token.length;
     el.focus();
     el.setSelectionRange(caret, caret);
     setCfg({ headers: parseMaybeJson(next) });
   };
 
-  // Body textarea is uncontrolled too; tag-picker splices {{key}} at the caret.
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const insertBodyToken = (key: string) => {
     const el = bodyRef.current;
@@ -1791,9 +1801,28 @@ function HttpNodeFields({
     setCfg({ body: parseMaybeJson(next) });
   };
 
-  // Resolved-headers preview: substitute {{tag}} against the project tags, but
-  // MASK the substituted value (tokens are usually secrets). Unmatched {{key}}
-  // placeholders are flagged so the user can fix a typo'd tag name.
+  // Mask a tag value for previews (params/secrets shouldn't be shoulder-surfed;
+  // domain/pathname stay visible since they're structural).
+  const maskValue = (t: Tag) =>
+    t.type === 'param' || t.type === 'generic'
+      ? '•'.repeat(Math.max(3, Math.min(8, t.value.length || 3)))
+      : t.value;
+
+  // ---- Resolved URL preview (masked + auto-scheme, mirrors the executor) ----
+  const urlPreview = (() => {
+    if (!url) return { text: '(no url)', missing: [] as string[], scheme: false };
+    const maskTags = tags.map((t) => ({ key: t.key, value: maskValue(t) }));
+    const r = interpolateTags(url, maskTags);
+    let resolved = r.result.trim();
+    let added = false;
+    if (resolved && !/^https?:\/\//i.test(resolved)) {
+      resolved = 'https://' + resolved.replace(/^\/+/, '');
+      added = true;
+    }
+    return { text: resolved || '(no url)', missing: r.missing, scheme: added };
+  })();
+
+  // ---- Resolved-headers preview (masked) ----
   const headersPreview = (() => {
     const h = cfg.headers;
     if (!h || typeof h !== 'object' || Array.isArray(h)) return null;
@@ -1814,37 +1843,61 @@ function HttpNodeFields({
     return anyTag ? rows : null;
   })();
 
-  // ----- live preview -----
-  // Mask a tag value for display (param secrets shouldn't be shoulder-surfed),
-  // but keep domain/pathname visible since they're structural, not secret.
-  const maskValue = (t: Tag) =>
-    t.type === 'param' || t.type === 'generic'
-      ? '•'.repeat(Math.max(3, Math.min(8, t.value.length || 3)))
-      : t.value;
-  const previewUrl = (() => {
-    if (urlMode === 'manual') return url || '(no url)';
-    if (resolvedParts.length === 0) return '(no parts)';
-    // Build using masked values so a secret param isn't revealed in the preview.
-    const masked = resolvedParts.map((t) =>
-      t.type === 'param'
-        ? // mask only the value side of key=val so the param name stays readable
-          {
-            value: t.value.replace(/^([?&]?[\w.-]+=)[\s\S]*/, (_m, p1) => p1 + '••••'),
-            type: t.type,
-          }
-        : { value: maskValue(t), type: t.type },
-    );
-    return buildUrlFromParts(masked);
-  })();
-
   const previewBody = (() => {
     if (isGet) return null;
     if (cfg.body == null || cfg.body === '') return '(empty body)';
-    // Interpolate {{tag}} placeholders with masked values for the preview.
     const maskTags = tags.map((t) => ({ key: t.key, value: maskValue(t) }));
     const text = typeof cfg.body === 'string' ? cfg.body : JSON.stringify(cfg.body, null, 2);
     return interpolateTags(text, maskTags).result || '(empty body)';
   })();
+
+  // ---- Output bindings (Response → Tag), saved on this node ----
+  const outputBindings: NodeBinding[] = Array.isArray(cfg.outputBindings)
+    ? (cfg.outputBindings as NodeBinding[])
+    : [];
+  const tagKeyById = (tid: string) => byId.get(tid)?.key ?? null;
+  const removeBinding = (path: string) => {
+    setCfg({ outputBindings: outputBindings.filter((b) => b.path !== path) });
+  };
+
+  const TABS: { id: HttpTab; label: string }[] = [
+    { id: 'request', label: 'Request' },
+    { id: 'headers', label: 'Headers' },
+    { id: 'body', label: 'Body' },
+    { id: 'output', label: 'Output' },
+  ];
+
+  // Shared tag-picker chip renderer.
+  const TagChips = ({
+    pool,
+    onInsert,
+    testid,
+    empty,
+  }: {
+    pool: Tag[];
+    onInsert: (key: string) => void;
+    testid: string;
+    empty: string;
+  }) => (
+    <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid={testid}>
+      {pool.length === 0 ? (
+        <span className="text-[10px] text-[var(--color-neutral-400)]">{empty}</span>
+      ) : (
+        pool.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onInsert(t.key)}
+            data-testid={`${testid}-insert-${t.key}`}
+            className="rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-0.5 font-mono text-[10px] text-[var(--color-neutral-700)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+            title={`Insert {{${t.key}}}`}
+          >
+            {'{{'}{t.key}{'}}'}
+          </button>
+        ))
+      )}
+    </div>
+  );
 
   return (
     <div className="flex flex-col gap-4 rounded-lg border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] p-3">
@@ -1852,269 +1905,240 @@ function HttpNodeFields({
         HTTP Request
       </p>
 
-      <div className="grid grid-cols-[110px_1fr] gap-2">
-        <select
-          value={method}
-          data-testid="http-method"
-          onChange={(e) => setCfg({ method: e.target.value })}
-          className="rounded-lg border border-[var(--color-neutral-300)] px-2 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
-        >
-          {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-        <div className="flex flex-col gap-1.5">
-          {/* URL source toggle: manual text or assembled from typed tags. */}
-          <div className="flex gap-3 text-xs">
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                data-testid="url-mode-manual"
-                checked={urlMode === 'manual'}
-                onChange={() => setCfg({ urlMode: 'manual' })}
-              />
-              Type URL
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                data-testid="url-mode-builder"
-                checked={urlMode === 'builder'}
-                onChange={() =>
-                  setCfg({
-                    urlMode: 'builder',
-                    urlParts: urlParts.length
-                      ? urlParts
-                      : domainTags[0]
-                      ? [domainTags[0].id]
-                      : [],
-                  })
-                }
-              />
-              Build from tags
-            </label>
-          </div>
-          {urlMode === 'manual' ? (
+      {/* Tab bar */}
+      <div
+        className="flex gap-1 rounded-lg bg-[var(--color-neutral-100)] p-1"
+        data-testid="http-tabs"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            data-testid={`http-tab-${t.id}`}
+            onClick={() => setTab(t.id)}
+            className={
+              'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition ' +
+              (tab === t.id
+                ? 'bg-white text-[var(--color-primary)] shadow-sm'
+                : 'text-[var(--color-neutral-500)] hover:text-[var(--color-neutral-700)]')
+            }
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ---- Request tab: method + url ---- */}
+      {tab === 'request' && (
+        <div className="flex flex-col gap-3" data-testid="http-tab-panel-request">
+          <div className="grid grid-cols-[110px_1fr] gap-2">
+            <select
+              value={method}
+              data-testid="http-method"
+              onChange={(e) => setCfg({ method: e.target.value })}
+              className="rounded-lg border border-[var(--color-neutral-300)] px-2 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+            >
+              {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
             <input
+              ref={urlRef}
               type="text"
-              placeholder="https://api.example.com/endpoint"
-              value={url}
+              placeholder="https://{{domain}}/api/v1/endpoint"
+              defaultValue={url}
+              key={url}
               data-testid="http-url"
-              onChange={(e) => setCfg({ url: e.target.value })}
-              className="rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+              onBlur={(e) => setCfg({ url: e.target.value })}
+              className="rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 font-mono text-sm focus:border-[var(--color-primary)] focus:outline-none"
             />
-          ) : (
-            <div className="flex flex-col gap-1.5" data-testid="url-builder">
-              {urlParts.length === 0 && (
-                <span className="text-[11px] text-[var(--color-neutral-400)]">
-                  No parts yet — add a domain tag first.
-                </span>
-              )}
-              {urlParts.map((pid, i) => {
-                // First part = domain (locked to index 0); others = pathname/param.
-                const pool = i === 0 ? domainTags : pathOrParamTags;
-                return (
-                  <div key={i} className="flex items-center gap-1" data-testid={`url-part-${i}`}>
-                    <span className="w-12 shrink-0 text-[10px] text-[var(--color-neutral-400)]">
-                      {i === 0 ? '🌐 base' : `#${i}`}
+          </div>
+          <div>
+            <p className="text-[10px] text-[var(--color-neutral-500)]">
+              Type the URL and embed tags with{' '}
+              <code className="font-mono">{'{{tagKey}}'}</code> — e.g.{' '}
+              <code className="font-mono">https://{'{{domain}}'}/api</code>. No scheme? https:// is
+              added automatically. Click a tag to insert it at the cursor.
+            </p>
+            <TagChips
+              pool={tags}
+              onInsert={insertUrlToken}
+              testid="url-tag-picker"
+              empty="No tags defined yet."
+            />
+          </div>
+          {/* Resolved URL preview (masked + shows auto-added scheme). */}
+          <div
+            data-testid="http-url-preview"
+            className="rounded-lg bg-[var(--color-neutral-900)] p-2"
+          >
+            <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+              Resolved URL
+            </p>
+            <code className="block break-all font-mono text-[11px] text-[var(--color-neutral-100)]">
+              {method} {urlPreview.text}
+            </code>
+            {urlPreview.scheme && (
+              <span className="mt-1 block text-[10px] text-[var(--color-info)]">
+                ↳ https:// added automatically
+              </span>
+            )}
+            {urlPreview.missing.length > 0 && (
+              <span className="mt-1 block text-[10px] text-[var(--color-warning)]">
+                ⚠ unknown tag: {urlPreview.missing.join(', ')}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ---- Headers tab ---- */}
+      {tab === 'headers' && (
+        <div data-testid="http-tab-panel-headers">
+          <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-600)]">
+            Headers (JSON)
+          </label>
+          <textarea
+            ref={headersRef}
+            rows={4}
+            placeholder='{ "Authorization": "Bearer {{access_token}}" }'
+            defaultValue={headersText}
+            data-testid="http-headers"
+            onBlur={(e) => setCfg({ headers: parseMaybeJson(e.target.value) })}
+            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+          />
+          <p className="mt-1 text-[10px] text-[var(--color-neutral-500)]">
+            Insert a tag with <code className="font-mono">{'{{tagKey}}'}</code> — e.g.{' '}
+            <code className="font-mono">Bearer {'{{access_token}}'}</code>. Click a tag below to
+            insert it at the cursor.
+          </p>
+          <TagChips
+            pool={tags}
+            onInsert={insertTagToken}
+            testid="header-tag-picker"
+            empty="No tags defined yet."
+          />
+          {headersPreview && (
+            <div
+              data-testid="http-headers-preview"
+              className="mt-2 rounded-lg bg-[var(--color-neutral-900)] p-2"
+            >
+              <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+                Resolved headers
+              </p>
+              {headersPreview.map((r) => (
+                <code
+                  key={r.k}
+                  className="block break-all font-mono text-[11px] text-[var(--color-neutral-100)]"
+                >
+                  {r.k}: {r.v}
+                  {r.missing.length > 0 && (
+                    <span className="ml-2 text-[var(--color-warning)]">
+                      ⚠ unknown tag: {r.missing.join(', ')}
                     </span>
-                    <select
-                      value={pid}
-                      data-testid={`url-part-select-${i}`}
-                      onChange={(e) => setPartAt(i, e.target.value)}
-                      className="min-w-0 flex-1 rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
-                    >
-                      <option value="">(select tag)</option>
-                      {pool.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {(TAG_TYPE_META[t.type ?? 'generic']?.icon ?? '') + ' ' + t.key}
-                        </option>
-                      ))}
-                    </select>
-                    {/* Reorder (domain pinned at index 0). */}
-                    {i > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          data-testid={`url-part-up-${i}`}
-                          onClick={() => movePart(i, -1)}
-                          disabled={i <= 1}
-                          className="rounded px-1 text-xs text-[var(--color-neutral-500)] hover:text-[var(--color-primary)] disabled:opacity-30"
-                          aria-label="Move part up"
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          data-testid={`url-part-down-${i}`}
-                          onClick={() => movePart(i, 1)}
-                          disabled={i >= urlParts.length - 1}
-                          className="rounded px-1 text-xs text-[var(--color-neutral-500)] hover:text-[var(--color-primary)] disabled:opacity-30"
-                          aria-label="Move part down"
-                        >
-                          ↓
-                        </button>
-                      </>
-                    )}
+                  )}
+                </code>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---- Body tab ---- */}
+      {tab === 'body' && (
+        <div data-testid="http-tab-panel-body">
+          <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-600)]">
+            Body (JSON){isGet ? ' — ignored for GET' : ''}
+          </label>
+          <textarea
+            ref={bodyRef}
+            rows={5}
+            placeholder='{ "hello": "{{bodyTag}}" }'
+            defaultValue={bodyText}
+            data-testid="http-body"
+            disabled={isGet}
+            onBlur={(e) => setCfg({ body: parseMaybeJson(e.target.value) })}
+            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none disabled:opacity-50"
+          />
+          {!isGet && (
+            <>
+              <p className="mt-1 text-[10px] text-[var(--color-neutral-500)]">
+                Insert a tag with <code className="font-mono">{'{{tagKey}}'}</code>. Click a tag
+                below to insert it at the cursor.
+              </p>
+              <TagChips
+                pool={bodyPickerTags}
+                onInsert={insertBodyToken}
+                testid="body-tag-picker"
+                empty="No body/generic tags defined yet."
+              />
+              {previewBody !== null && (
+                <div className="mt-2 rounded-lg bg-[var(--color-neutral-900)] p-2">
+                  <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+                    Resolved body
+                  </p>
+                  <pre className="whitespace-pre-wrap break-all font-mono text-[11px] text-[var(--color-neutral-300)]">
+                    {previewBody}
+                  </pre>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ---- Output tab: Response → Tag bindings ---- */}
+      {tab === 'output' && (
+        <div data-testid="http-tab-panel-output" className="flex flex-col gap-2">
+          <label className="block text-xs font-medium text-[var(--color-neutral-600)]">
+            Response → Tag bindings
+          </label>
+          <p className="text-[10px] text-[var(--color-neutral-500)]">
+            Run this node, then bind a field of the response to a tag from the result panel. Saved
+            bindings re-capture that field on every run.
+          </p>
+          {outputBindings.length === 0 ? (
+            <span
+              data-testid="http-output-empty"
+              className="rounded-lg border border-dashed border-[var(--color-neutral-300)] px-3 py-3 text-center text-[11px] text-[var(--color-neutral-400)]"
+            >
+              No output bindings yet. Run the node and bind a response field to a tag.
+            </span>
+          ) : (
+            <div className="flex flex-col gap-1.5" data-testid="http-output-bindings">
+              {outputBindings.map((b) => {
+                const key = b.tagKey ?? tagKeyById(b.tagId);
+                return (
+                  <div
+                    key={b.path}
+                    data-testid={`http-output-binding-${b.path}`}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-neutral-200)] bg-white px-2.5 py-1.5"
+                  >
+                    <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--color-neutral-700)]">
+                      <span className="text-[var(--color-neutral-500)]">{b.path}</span>
+                      <span className="mx-1 text-[var(--color-neutral-400)]">→</span>
+                      <span className="text-[var(--color-primary)]">
+                        {key ? `{{${key}}}` : '(tag deleted)'}
+                      </span>
+                    </code>
                     <button
                       type="button"
-                      data-testid={`url-part-remove-${i}`}
-                      onClick={() => removePart(i)}
-                      className="rounded px-1 text-xs text-[var(--color-danger)] hover:underline"
-                      aria-label="Remove part"
+                      data-testid={`http-output-remove-${b.path}`}
+                      onClick={() => removeBinding(b.path)}
+                      className="shrink-0 rounded px-1 text-xs text-[var(--color-danger)] hover:underline"
+                      aria-label="Remove binding"
                     >
                       ✕
                     </button>
                   </div>
                 );
               })}
-              <button
-                type="button"
-                data-testid="url-part-add"
-                onClick={addPart}
-                className="self-start rounded-lg border border-dashed border-[var(--color-neutral-300)] px-2 py-1 text-[11px] text-[var(--color-neutral-600)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-              >
-                + add part
-              </button>
-              {!urlBuilderValid && (
-                <span
-                  data-testid="url-builder-warning"
-                  className="text-[10px] text-[var(--color-warning)]"
-                >
-                  ⚠ First part must be a 🌐 domain tag.
-                </span>
-              )}
             </div>
           )}
         </div>
-      </div>
-
-      <div>
-        <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-600)]">
-          Headers (JSON)
-        </label>
-        <textarea
-          ref={headersRef}
-          rows={2}
-          placeholder='{ "Authorization": "Bearer {{access_token}}" }'
-          defaultValue={headersText}
-          data-testid="http-headers"
-          onBlur={(e) => setCfg({ headers: parseMaybeJson(e.target.value) })}
-          className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
-        />
-        <p className="mt-1 text-[10px] text-[var(--color-neutral-500)]">
-          Insert a tag with <code className="font-mono">{'{{tagKey}}'}</code> — e.g.{' '}
-          <code className="font-mono">Bearer {'{{access_token}}'}</code>. Click a tag below to
-          insert it at the cursor.
-        </p>
-        {/* Tag variable picker — click to splice {{key}} into the headers box. */}
-        <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="header-tag-picker">
-          {tags.length === 0 ? (
-            <span className="text-[10px] text-[var(--color-neutral-400)]">
-              No tags defined yet.
-            </span>
-          ) : (
-            tags.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => insertTagToken(t.key)}
-                data-testid={`insert-tag-${t.key}`}
-                className="rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-0.5 font-mono text-[10px] text-[var(--color-neutral-700)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-                title={`Insert {{${t.key}}}`}
-              >
-                {'{{'}{t.key}{'}}'}
-              </button>
-            ))
-          )}
-        </div>
-        {/* Resolved-headers preview (tag values masked — real value is sent). */}
-        {headersPreview && (
-          <div
-            data-testid="http-headers-preview"
-            className="mt-2 rounded-lg bg-[var(--color-neutral-900)] p-2"
-          >
-            <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
-              Resolved headers
-            </p>
-            {headersPreview.map((r) => (
-              <code
-                key={r.k}
-                className="block break-all font-mono text-[11px] text-[var(--color-neutral-100)]"
-              >
-                {r.k}: {r.v}
-                {r.missing.length > 0 && (
-                  <span className="ml-2 text-[var(--color-warning)]">
-                    ⚠ unknown tag: {r.missing.join(', ')}
-                  </span>
-                )}
-              </code>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-600)]">
-          Body (JSON){isGet ? ' — ignored for GET' : ''}
-        </label>
-        <textarea
-          ref={bodyRef}
-          rows={3}
-          placeholder='{ "hello": "{{bodyTag}}" }'
-          defaultValue={bodyText}
-          data-testid="http-body"
-          disabled={isGet}
-          onBlur={(e) => setCfg({ body: parseMaybeJson(e.target.value) })}
-          className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none disabled:opacity-50"
-        />
-        {!isGet && (
-          <>
-            <p className="mt-1 text-[10px] text-[var(--color-neutral-500)]">
-              Insert a tag with <code className="font-mono">{'{{tagKey}}'}</code>. Click a tag
-              below to insert it at the cursor.
-            </p>
-            {/* Body tag picker — only body + generic tags belong in a JSON body. */}
-            <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="body-tag-picker">
-              {bodyPickerTags.length === 0 ? (
-                <span className="text-[10px] text-[var(--color-neutral-400)]">
-                  No body/generic tags defined yet.
-                </span>
-              ) : (
-                bodyPickerTags.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => insertBodyToken(t.key)}
-                    data-testid={`insert-body-tag-${t.key}`}
-                    className="rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-0.5 font-mono text-[10px] text-[var(--color-neutral-700)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-                    title={`Insert {{${t.key}}}`}
-                  >
-                    {'{{'}{t.key}{'}}'}
-                  </button>
-                ))
-              )}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Live preview */}
-      <div data-testid="http-preview" className="rounded-lg bg-[var(--color-neutral-900)] p-3">
-        <p className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
-          Preview
-        </p>
-        <code className="block break-all font-mono text-xs text-[var(--color-neutral-100)]">
-          {method} {previewUrl}
-        </code>
-        {previewBody !== null && (
-          <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-xs text-[var(--color-neutral-300)]">
-            {previewBody}
-          </pre>
-        )}
-      </div>
+      )}
     </div>
   );
 }

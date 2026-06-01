@@ -407,10 +407,36 @@ export async function executeNode(
         }
 
         // ---- n8n-style {{tag}} interpolation in the base URL ----
-        // Lets a user embed a tag mid-string (e.g. ".../users/{{userId}}") in
-        // either the typed url or an assembled url. Runs before any legacy
-        // tagQuery so params are appended onto the already-substituted url.
+        // Lets a user embed a tag mid-string (e.g. ".../users/{{userId}}") or a
+        // tag-only host (e.g. "{{huayDomain}}/api/...") in either the typed url
+        // or an assembled url. Runs before any legacy tagQuery so params are
+        // appended onto the already-substituted url.
         baseUrl = interpolateTags(String(baseUrl), tags).result;
+
+        // ---- Auto-prepend a scheme ----
+        // A tag value like "huay5bet.com" (no scheme) interpolates into a url
+        // that `fetch`/`new URL()` can't parse ("Failed to parse URL from ...").
+        // If the resolved url has no http(s):// scheme, default to https:// so
+        // the common "domain tag without scheme" case just works. We only treat
+        // a leading "scheme://" as already-schemed (protocol-relative "//host"
+        // also gets https:).
+        baseUrl = baseUrl.trim();
+        if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+          baseUrl = 'https://' + baseUrl.replace(/^\/+/, '');
+        }
+
+        // Validate the final url is parseable so we surface a clear message
+        // instead of a raw "Failed to parse URL" from fetch.
+        try {
+          // eslint-disable-next-line no-new
+          new URL(baseUrl);
+        } catch {
+          return {
+            nodeId: node.id,
+            status: 'error',
+            error: `Invalid URL: "${baseUrl}". Check the URL and any {{tag}} values it references.`,
+          };
+        }
 
         // ---- Legacy tagQuery: append resolved tags as query params ----
         // The URL builder supersedes this (query lives in param tags), but old
