@@ -40,6 +40,7 @@ import {
 } from '@/components/canvas/ExecutionResultPanel';
 import {
   interpolateTags,
+  interpolateDeep,
   hasTagPlaceholder,
   detectTagType,
 } from '@/lib/path-utils';
@@ -1663,7 +1664,7 @@ function CallRoutePicker({
 // ---------- HTTP node config fields (Edit Node modal) ----------
 // Organised into tabs (Request / Headers / Body / Output) so a node with a long
 // config is easy to scan. Each tab renders only its slice of config.
-type HttpTab = 'request' | 'headers' | 'body' | 'output';
+type HttpTab = 'request' | 'headers' | 'body' | 'preview' | 'output';
 
 function HttpNodeFields({
   node,
@@ -1851,6 +1852,139 @@ function HttpNodeFields({
     return interpolateTags(text, maskTags).result || '(empty body)';
   })();
 
+  // ---- Combined request-config preview (mirrors the executor exactly) ----
+  // The user wants ONE place that shows the full request the executor will send
+  // (method / url / every header / data) — like an axios config object — so they
+  // can debug why a call fails (empty token? wrong url? missing header?). A
+  // "Reveal values" toggle un-masks secret tag values for that debugging.
+  const [reveal, setReveal] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // Build the config the same way lib/node-executor.ts does, collecting any tag
+  // placeholders that don't resolve (missing) or resolve to an empty string
+  // (emptyTags) so we can flag them — those are the usual "why did it fail".
+  const configPreview = useMemo(() => {
+    // When revealing, show the real tag value; otherwise mask param/generic.
+    const previewTags = tags.map((t) => ({
+      key: t.key,
+      value: reveal ? (t.value ?? '') : maskValue(t),
+    }));
+    const missingSet = new Set<string>();
+    const emptySet = new Set<string>();
+    // A tag whose *real* value is empty/whitespace — flagged regardless of mask.
+    const emptyByKey = new Map(
+      tags.map((t) => [t.key, !((t.value ?? '').trim())] as const),
+    );
+    const noteMissing = (keys: string[]) => keys.forEach((k) => missingSet.add(k));
+    // Record which referenced keys resolve to an empty real value.
+    const noteRefs = (raw: string) => {
+      if (typeof raw !== 'string') return;
+      const re = /\{\{\s*([^{}]+?)\s*\}\}/g;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(raw)) !== null) {
+        const k = m[1];
+        if (emptyByKey.get(k)) emptySet.add(k);
+      }
+    };
+
+    // url: interpolate + auto-scheme https:// (mirrors executor).
+    let url = '';
+    let schemeAdded = false;
+    {
+      noteRefs(String(cfg.url ?? ''));
+      const r = interpolateTags(String(cfg.url ?? ''), previewTags);
+      noteMissing(r.missing);
+      let resolved = r.result.trim();
+      if (resolved && !/^https?:\/\//i.test(resolved)) {
+        resolved = 'https://' + resolved.replace(/^\/+/, '');
+        schemeAdded = true;
+      }
+      url = resolved;
+    }
+
+    // headers: Content-Type default + each value interpolated (mirrors executor).
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const h = cfg.headers;
+    if (h && typeof h === 'object' && !Array.isArray(h)) {
+      for (const [k, v] of Object.entries(h as Record<string, unknown>)) {
+        if (typeof v === 'string') {
+          noteRefs(v);
+          const r = interpolateTags(v, previewTags);
+          noteMissing(r.missing);
+          headers[k] = r.result;
+        } else {
+          headers[k] = String(v);
+        }
+      }
+    }
+
+    // data: interpolateDeep then JSON.stringify — only for non-GET with a body.
+    let data: string | undefined;
+    if (!isGet && cfg.body != null && cfg.body !== '') {
+      // Record refs from the raw body (string or stringified object) for warnings.
+      noteRefs(typeof cfg.body === 'string' ? cfg.body : JSON.stringify(cfg.body));
+      if (typeof cfg.body === 'string') {
+        const r = interpolateTags(cfg.body, previewTags);
+        noteMissing(r.missing);
+        data = r.result;
+      } else {
+        const r = interpolateDeep(cfg.body, previewTags);
+        noteMissing(r.missing);
+        try {
+          data = JSON.stringify(r.value);
+        } catch {
+          data = String(r.value);
+        }
+      }
+    }
+
+    return {
+      method: method.toLowerCase(),
+      url,
+      schemeAdded,
+      headers,
+      data,
+      missing: Array.from(missingSet),
+      emptyTags: Array.from(emptySet),
+    };
+  }, [tags, reveal, cfg.url, cfg.headers, cfg.body, method, isGet]);
+
+  // Render the config as a copy-pastable JS object literal (axios-style).
+  const configText = useMemo(() => {
+    const lines: string[] = ['const config = {'];
+    lines.push(`  method: ${JSON.stringify(configPreview.method)},`);
+    lines.push(`  url: ${JSON.stringify(configPreview.url)},`);
+    lines.push('  headers: {');
+    for (const [k, v] of Object.entries(configPreview.headers)) {
+      lines.push(`    ${JSON.stringify(k)}: ${JSON.stringify(v)},`);
+    }
+    lines.push('  },');
+    if (configPreview.data !== undefined) {
+      lines.push(`  data: ${JSON.stringify(configPreview.data)},`);
+    }
+    lines.push('};');
+    return lines.join('\n');
+  }, [configPreview]);
+
+  const copyConfig = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(configText);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = configText;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked — ignore */
+    }
+  };
+
   // ---- Output bindings (Response → Tag), saved on this node ----
   const outputBindings: NodeBinding[] = Array.isArray(cfg.outputBindings)
     ? (cfg.outputBindings as NodeBinding[])
@@ -1864,6 +1998,7 @@ function HttpNodeFields({
     { id: 'request', label: 'Request' },
     { id: 'headers', label: 'Headers' },
     { id: 'body', label: 'Body' },
+    { id: 'preview', label: 'Preview' },
     { id: 'output', label: 'Output' },
   ];
 
@@ -2085,6 +2220,96 @@ function HttpNodeFields({
                 </div>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {/* ---- Preview tab: full request config (mirrors the executor) ---- */}
+      {tab === 'preview' && (
+        <div className="flex flex-col gap-3" data-testid="http-tab-panel-preview">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] text-[var(--color-neutral-500)]">
+              The exact request the executor sends — resolved {`{{tags}}`}, headers and data in one
+              place. Use it to debug a failing call.
+            </p>
+          </div>
+
+          {/* Controls: reveal toggle + copy. */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="http-preview-reveal"
+              onClick={() => setReveal((v) => !v)}
+              className={
+                'flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ' +
+                (reveal
+                  ? 'border-[var(--color-warning)] bg-[var(--color-warning)]/10 text-[var(--color-warning)]'
+                  : 'border-[var(--color-neutral-300)] bg-white text-[var(--color-neutral-600)] hover:border-[var(--color-primary)]')
+              }
+              title={reveal ? 'Hide secret values' : 'Reveal real values (for debugging)'}
+            >
+              {reveal ? '🙈 Hide values' : '👁️ Reveal values'}
+            </button>
+            <button
+              type="button"
+              data-testid="http-preview-copy"
+              onClick={copyConfig}
+              className="flex items-center gap-1 rounded-lg border border-[var(--color-neutral-300)] bg-white px-2.5 py-1.5 text-xs font-medium text-[var(--color-neutral-600)] transition hover:border-[var(--color-primary)]"
+            >
+              {copied ? '✓ Copied' : '⧉ Copy config'}
+            </button>
+          </div>
+
+          {reveal && (
+            <p
+              data-testid="http-preview-reveal-warning"
+              className="rounded-md bg-[var(--color-warning)]/10 px-2 py-1 text-[10px] text-[var(--color-warning)]"
+            >
+              ⚠ Showing real values (tokens, cookies). Don’t share this screen.
+            </p>
+          )}
+
+          {/* The config object, axios/fetch style. */}
+          <div
+            data-testid="http-config-preview"
+            className="rounded-lg bg-[var(--color-neutral-900)] p-3"
+          >
+            <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-[var(--color-neutral-100)]">
+              {configText}
+            </pre>
+            {configPreview.schemeAdded && (
+              <span className="mt-2 block text-[10px] text-[var(--color-info)]">
+                ↳ https:// added automatically (url had no scheme)
+              </span>
+            )}
+          </div>
+
+          {/* Debug helper: flag unresolved / empty tags. */}
+          {(configPreview.missing.length > 0 || configPreview.emptyTags.length > 0) && (
+            <div
+              data-testid="http-preview-warnings"
+              className="flex flex-col gap-1 rounded-lg border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/5 p-2"
+            >
+              {configPreview.missing.map((k) => (
+                <span
+                  key={`m-${k}`}
+                  data-testid={`http-preview-missing-${k}`}
+                  className="text-[10px] text-[var(--color-warning)]"
+                >
+                  ⚠ {`{{${k}}}`} ไม่มีค่า — ไม่มี tag ชื่อนี้ (สะกดผิด หรือยังไม่ได้สร้าง)
+                </span>
+              ))}
+              {configPreview.emptyTags.map((k) => (
+                <span
+                  key={`e-${k}`}
+                  data-testid={`http-preview-empty-${k}`}
+                  className="text-[10px] text-[var(--color-warning)]"
+                >
+                  ⚠ tag <code className="font-mono">{k}</code> ว่าง — login ก่อน หรือ bind จาก
+                  response (tab Output)
+                </span>
+              ))}
+            </div>
           )}
         </div>
       )}
