@@ -864,13 +864,17 @@ function ServerNodeFields({
   // Is the stored framework a custom (off-catalog) value?
   const isCustomFramework =
     framework !== '' && !frameworkOptions.includes(framework);
-  // The select shows CUSTOM when the framework is off-catalog (or user picked it).
-  const frameworkSelectValue = isCustomFramework
-    ? CUSTOM_FRAMEWORK
-    : framework;
+  // Explicit "custom mode" flag: needed because an empty custom framework looks
+  // identical to "no framework picked", so a stored '' can't tell us which.
+  // Seed it from an off-catalog stored value.
+  const [customMode, setCustomMode] = useState(isCustomFramework);
+  // The select shows CUSTOM when in custom mode (or the value is off-catalog).
+  const frameworkSelectValue =
+    customMode || isCustomFramework ? CUSTOM_FRAMEWORK : framework;
 
   const switchCategory = (next: 'frontend' | 'backend') => {
     if (next === category) return;
+    setCustomMode(false);
     // Reset language + framework when toggling category (they don't carry over).
     if (next === 'frontend') {
       setCfg({ category: 'frontend', language: undefined, framework: '' });
@@ -880,15 +884,18 @@ function ServerNodeFields({
   };
 
   const switchLanguage = (lang: string) => {
-    // Changing language always resets the framework (cascade).
+    // Changing language always resets the framework (cascade) + leaves custom mode.
+    setCustomMode(false);
     setCfg({ language: lang, framework: '' });
   };
 
   const onFrameworkSelect = (value: string) => {
     if (value === CUSTOM_FRAMEWORK) {
       // Enter custom mode with an empty string the user then types into.
+      setCustomMode(true);
       setCfg({ framework: '' });
     } else {
+      setCustomMode(false);
       setCfg({ framework: value });
     }
   };
@@ -904,9 +911,7 @@ function ServerNodeFields({
   }${previewPath}`;
 
   // Whether to show the custom framework text input: user is in custom mode.
-  const showCustomInput =
-    frameworkSelectValue === CUSTOM_FRAMEWORK ||
-    (framework === '' && frameworkSelectValue === CUSTOM_FRAMEWORK);
+  const showCustomInput = frameworkSelectValue === CUSTOM_FRAMEWORK;
 
   return (
     <div
@@ -989,7 +994,7 @@ function ServerNodeFields({
           ))}
           <option value={CUSTOM_FRAMEWORK}>+ Custom…</option>
         </select>
-        {(showCustomInput || isCustomFramework) && (
+        {showCustomInput && (
           <input
             type="text"
             data-testid="server-framework-custom"
