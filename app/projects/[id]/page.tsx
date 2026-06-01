@@ -24,6 +24,7 @@ import { useToast } from '@/components/Toast';
 import { FlowNode, FlowNodeData } from '@/components/canvas/FlowNode';
 import { NODE_TYPES, metaFor } from '@/components/canvas/nodeMeta';
 import { TagsPanel, type Tag } from '@/components/canvas/TagsPanel';
+import { ExecutionResultPanel, type ExecResult } from '@/components/canvas/ExecutionResultPanel';
 
 interface Project {
   id: string;
@@ -62,7 +63,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ApiNode | null>(null);
   const [executing, setExecuting] = useState(false);
-  const [execResult, setExecResult] = useState<string | null>(null);
+  // Result panel: null = closed. Holds an ordered list of node results plus a
+  // title (single node name, or "Workflow").
+  const [execPanel, setExecPanel] = useState<{ title: string; results: ExecResult[] } | null>(null);
+  // Per-node spinner state (single-node execute).
+  const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -208,22 +213,55 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     [id, toast],
   );
 
-  // ---- Execute ----
+  // ---- Execute whole workflow ----
   const execute = async () => {
     setExecuting(true);
     try {
       const res = await fetch(`/api/projects/${id}/execute`, { method: 'POST' });
       const data = await res.json();
-      setExecResult(JSON.stringify(data, null, 2));
-      if (res.ok) toast.success('Execution finished');
-      else toast.error('Execution returned an error');
+      const results: ExecResult[] = Array.isArray(data?.results) ? data.results : [];
+      setExecPanel({ title: 'Workflow', results });
+      if (res.ok && results.every((r) => r.status === 'success')) toast.success('Execution finished');
+      else toast.warning('Execution finished with errors');
     } catch {
       toast.error('Execution failed');
-      setExecResult('Network error during execution.');
+      setExecPanel({
+        title: 'Workflow',
+        results: [{ nodeId: '', status: 'error', error: 'Network error during execution.' }],
+      });
     } finally {
       setExecuting(false);
     }
   };
+
+  // ---- Execute a single node (n8n-style: fire one node, see its output) ----
+  const executeOne = useCallback(
+    async (nodeId: string) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId);
+      setRunningNodeId(nodeId);
+      try {
+        const res = await fetch(`/api/projects/${id}/nodes/${nodeId}/execute`, { method: 'POST' });
+        const data = await res.json();
+        const result: ExecResult | undefined = data?.result;
+        if (result) {
+          setExecPanel({ title: node?.name ?? 'Node', results: [result] });
+          if (result.status === 'success') toast.success('Node executed');
+          else toast.warning('Node returned an error');
+        } else {
+          toast.error(data?.error || 'Execution failed');
+        }
+      } catch {
+        toast.error('Execution failed');
+        setExecPanel({
+          title: node?.name ?? 'Node',
+          results: [{ nodeId, status: 'error', error: 'Network error during execution.' }],
+        });
+      } finally {
+        setRunningNodeId(null);
+      }
+    },
+    [id, toast],
+  );
 
   // ---- Tags ----
   // Persist the whole tag array (atomic replace). The PUT response returns the
@@ -279,16 +317,23 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const nodesRef = useRef<ApiNode[]>(nodes);
   nodesRef.current = nodes;
 
+  // executeOne is defined above; keep it in a ref so buildData (deps: runningNodeId)
+  // doesn't need to re-subscribe to it.
+  const executeOneRef = useRef(executeOne);
+  executeOneRef.current = executeOne;
+
   const buildData = useCallback(
     (n: ApiNode): FlowNodeData => ({
       name: n.name,
       type: n.type,
       description: n.description,
+      executing: runningNodeId === n.id,
       onEdit: (nid: string) => setEditingNode(nodesRef.current.find((x) => x.id === nid) ?? null),
       onDelete: (nid: string) =>
         setDeleteTarget(nodesRef.current.find((x) => x.id === nid) ?? null),
+      onExecute: (nid: string) => executeOneRef.current(nid),
     }),
-    [],
+    [runningNodeId],
   );
 
   // Reconcile RFNode[] with the source-of-truth ApiNode[] WITHOUT discarding the
@@ -437,6 +482,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             onDelete={(n) => setDeleteTarget(n)}
             onConnect={createEdge}
             onDeleteEdge={deleteEdge}
+            onExecute={(n) => executeOne(n.id)}
+            runningNodeId={runningNodeId}
           />
         ) : (
           <ReactFlow
@@ -540,23 +587,22 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         )}
       </Modal>
 
-      {/* Execute result modal */}
+      {/* Execute result panel — n8n-style. On mobile the Modal renders as a
+          full-width bottom sheet (overlay), per the mobile-first rule. */}
       <Modal
-        open={execResult !== null}
-        onClose={() => setExecResult(null)}
-        title="Execution Result"
+        open={execPanel !== null}
+        onClose={() => setExecPanel(null)}
+        title={execPanel ? `Result · ${execPanel.title}` : 'Result'}
         size="lg"
         footer={
           <div className="flex justify-end">
-            <Button variant="secondary" onClick={() => setExecResult(null)}>
+            <Button variant="secondary" onClick={() => setExecPanel(null)}>
               Close
             </Button>
           </div>
         }
       >
-        <pre className="max-h-[60vh] overflow-auto rounded-lg bg-[var(--color-neutral-900)] p-4 text-xs leading-relaxed text-[var(--color-neutral-100)]">
-          {execResult}
-        </pre>
+        <ExecutionResultPanel results={execPanel?.results ?? []} />
       </Modal>
 
       {/* Delete node confirm */}
@@ -798,6 +844,8 @@ function MobileNodeList({
   onDelete,
   onConnect,
   onDeleteEdge,
+  onExecute,
+  runningNodeId,
 }: {
   nodes: ApiNode[];
   edges: ApiEdge[];
@@ -805,6 +853,8 @@ function MobileNodeList({
   onDelete: (n: ApiNode) => void;
   onConnect: (source: string, target: string) => void;
   onDeleteEdge: (edgeId: string) => void;
+  onExecute: (n: ApiNode) => void;
+  runningNodeId: string | null;
 }) {
   const [linkFrom, setLinkFrom] = useState<ApiNode | null>(null);
   const nameById = useMemo(() => new Map(nodes.map((n) => [n.id, n.name])), [nodes]);
@@ -863,6 +913,15 @@ function MobileNodeList({
               )}
 
               <div className="mt-3 flex gap-2">
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => onExecute(n)}
+                  loading={runningNodeId === n.id}
+                  className="flex-1"
+                >
+                  ▶ Run
+                </Button>
                 <Button size="sm" variant="secondary" onClick={() => onEdit(n)} className="flex-1">
                   Edit
                 </Button>

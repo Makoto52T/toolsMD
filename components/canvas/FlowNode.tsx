@@ -10,6 +10,8 @@ export interface FlowNodeData {
   description?: string;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onExecute: (id: string) => void;
+  executing?: boolean;
 }
 
 function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
@@ -52,6 +54,18 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
       ) : null}
 
       <div className="flex gap-1 px-2 py-2">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            data.onExecute(id);
+          }}
+          disabled={data.executing}
+          title="Execute this node"
+          className="nodrag flex-1 rounded-md py-1 text-xs font-medium text-white transition-colors disabled:opacity-60"
+          style={{ background: meta.color }}
+        >
+          {data.executing ? '…' : '▶ Run'}
+        </button>
         <button
           onClick={(e) => {
             e.stopPropagation();

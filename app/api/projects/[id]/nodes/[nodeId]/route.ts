@@ -11,8 +11,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const { name, description, positionX, positionY, config } = await request.json();
-  const node = await store.updateNode(id, nodeId, { name, description, positionX, positionY, config });
+  const { type, name, description, positionX, positionY, config } = await request.json();
+  const node = await store.updateNode(id, nodeId, { type, name, description, positionX, positionY, config });
 
   return NextResponse.json(node);
 }

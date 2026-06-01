@@ -1,11 +1,33 @@
 import { Node as PlannerNode, Edge, Tag } from './store';
 
+export interface HttpMeta {
+  // Request that was actually sent (after tag merging) — useful for the UI.
+  request: { method: string; url: string };
+  // Response metadata (absent on network-level failures).
+  statusCode?: number;
+  statusText?: string;
+  ok?: boolean;
+  headers?: Record<string, string>;
+  contentType?: string;
+  // How the body was parsed: 'json' when JSON.parse succeeded, else 'text'.
+  bodyType?: 'json' | 'text';
+  durationMs: number;
+}
+
 export interface ExecutionResult {
   nodeId: string;
+  nodeName?: string;
+  nodeType?: string;
   status: 'success' | 'error';
   output?: any;
   error?: string;
+  // Present for http-request nodes (both success and error) so the UI can show
+  // status code / headers / timing the way n8n does.
+  http?: HttpMeta;
 }
+
+// Hard cap so a hung endpoint can't keep a serverless invocation alive forever.
+const HTTP_TIMEOUT_MS = 20000;
 
 // Resolve an array of tag ids (referenced by an http node config) into
 // concrete key/value pairs using the project-level tag list. Unknown ids are
@@ -99,6 +121,9 @@ export async function executeNode(
           }
         }
 
+        const started = Date.now();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
         try {
           const response = await fetch(finalUrl, {
             method: httpMethod,
@@ -107,12 +132,68 @@ export async function executeNode(
               httpMethod !== 'GET' && httpMethod !== 'HEAD' && finalBody
                 ? JSON.stringify(finalBody)
                 : undefined,
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+
+          // Read once as text, then try to parse as JSON. Non-JSON responses
+          // (HTML error pages, plain text) are surfaced as a string body rather
+          // than throwing — n8n shows whatever came back.
+          const raw = await response.text();
+          let body: any = raw;
+          let bodyType: 'json' | 'text' = 'text';
+          try {
+            body = raw.length ? JSON.parse(raw) : '';
+            bodyType = raw.length ? 'json' : 'text';
+          } catch {
+            body = raw;
+            bodyType = 'text';
+          }
+
+          const respHeaders: Record<string, string> = {};
+          response.headers.forEach((v, k) => {
+            respHeaders[k] = v;
           });
 
-          const data = await response.json();
-          return { nodeId: node.id, status: 'success', output: data };
+          const http: HttpMeta = {
+            request: { method: httpMethod, url: finalUrl },
+            statusCode: response.status,
+            statusText: response.statusText,
+            ok: response.ok,
+            headers: respHeaders,
+            contentType: response.headers.get('content-type') ?? undefined,
+            bodyType,
+            durationMs: Date.now() - started,
+          };
+
+          // A non-2xx response is a "successful" execution (we got a reply) but
+          // carries an error message so the UI can flag it red. The body is still
+          // returned so downstream nodes / the user can inspect it.
+          if (!response.ok) {
+            return {
+              nodeId: node.id,
+              status: 'error',
+              error: `HTTP ${response.status} ${response.statusText}`,
+              output: body,
+              http,
+            };
+          }
+
+          return { nodeId: node.id, status: 'success', output: body, http };
         } catch (e: any) {
-          return { nodeId: node.id, status: 'error', error: e.message };
+          clearTimeout(timer);
+          const aborted = e?.name === 'AbortError';
+          return {
+            nodeId: node.id,
+            status: 'error',
+            error: aborted
+              ? `Request timed out after ${HTTP_TIMEOUT_MS}ms`
+              : e?.message || 'Network request failed',
+            http: {
+              request: { method: httpMethod, url: finalUrl },
+              durationMs: Date.now() - started,
+            },
+          };
         }
       }
 
@@ -192,6 +273,8 @@ export async function executeWorkflow(
     const inputs = getNodeInputs(nodeId, edges, outputs);
 
     const result = await executeNode(node, inputs, tags);
+    result.nodeName = node.name;
+    result.nodeType = node.type;
     results.push(result);
 
     if (result.status === 'success') {
@@ -200,6 +283,19 @@ export async function executeWorkflow(
   }
 
   return results;
+}
+
+// Execute a single node in isolation (no upstream chain). Used by the per-node
+// "Execute" button so the user can fire one HTTP request and inspect its output
+// immediately, n8n-style.
+export async function executeSingleNode(
+  node: PlannerNode,
+  tags: Tag[] = []
+): Promise<ExecutionResult> {
+  const result = await executeNode(node, {}, tags);
+  result.nodeName = node.name;
+  result.nodeType = node.type;
+  return result;
 }
 
 function getNodeInputs(nodeId: string, edges: Edge[], outputs: Map<string, any>): Record<string, any> {
