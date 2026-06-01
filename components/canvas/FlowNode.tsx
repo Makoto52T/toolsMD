@@ -41,10 +41,10 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   return (
     <div
       className={[
-        'w-[180px] rounded-xl border-2 bg-white shadow-sm transition-shadow',
-        selected ? 'shadow-lg' : 'hover:shadow-md',
+        'w-[180px] rounded-xl border-2 bg-white shadow-md transition-shadow',
+        selected ? 'shadow-xl' : 'hover:shadow-lg',
       ].join(' ')}
-      style={{ borderColor: selected ? meta.color : '#e2e8f0' }}
+      style={{ borderColor: selected ? meta.color : '#cbd5e1' }}
     >
       <Handle
         id="top"

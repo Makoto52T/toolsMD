@@ -931,7 +931,7 @@ function OutputColumn({
   // Collapsed: thin rail with a re-open button on the right edge.
   if (collapsed) {
     return (
-      <div className="flex h-full w-10 shrink-0 flex-col items-center border-l border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] py-3">
+      <div className="flex h-full w-10 shrink-0 flex-col items-center border-l-2 border-[var(--color-neutral-300)] bg-[var(--color-neutral-100)] py-3">
         <button
           type="button"
           onClick={onToggleCollapse}
@@ -949,7 +949,7 @@ function OutputColumn({
   return (
     <div
       data-testid="output-panel"
-      className="flex h-full w-96 shrink-0 flex-col border-l border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]"
+      className="flex h-full w-96 shrink-0 flex-col border-l-2 border-[var(--color-neutral-300)] bg-[var(--color-neutral-100)]"
     >
       <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] px-4 py-3">
         <h2 className="truncate text-sm font-bold text-[var(--color-neutral-900)]">

@@ -381,7 +381,7 @@ export function TagsPanel({
   return (
     <div
       data-testid="tags-panel"
-      className="flex h-full w-72 shrink-0 flex-col border-r border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]"
+      className="flex h-full w-72 shrink-0 flex-col border-r-2 border-[var(--color-neutral-300)] bg-[var(--color-neutral-100)]"
     >
       {panelBody}
     </div>
