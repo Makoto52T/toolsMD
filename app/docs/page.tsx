@@ -19,6 +19,7 @@ const SECTIONS: Section[] = [
   { id: 'http', title: 'HTTP Request', icon: '⚡' },
   { id: 'server', title: 'Server Node', icon: '🖥️' },
   { id: 'execution', title: 'Execution', icon: '▶️' },
+  { id: 'loop', title: 'Loop Mode', icon: '🔁' },
   { id: 'templates', title: 'Templates', icon: '📋' },
   { id: 'tips', title: 'Tips', icon: '💡' },
 ];
@@ -246,6 +247,63 @@ function Execution() {
   );
 }
 
+function LoopMode() {
+  return (
+    <section>
+      <H2 id="loop" icon="🔁">Loop Mode</H2>
+      <P>
+        <strong>Loop mode</strong> is an option on an <em>existing</em> node (HTTP request, function, …) — not a
+        separate node type. Turn it on and running that node repeats it a fixed number of times in sequence,
+        waiting for each round to finish before starting the next. Use it for polling a job until it&apos;s done,
+        retrying a flaky call, or driving a counter.
+      </P>
+
+      <H3>Turn it on</H3>
+      <P>
+        Open the node&apos;s editor and toggle <strong>🔁 เปิด Loop mode</strong>. The loop fields appear below;
+        leaving the toggle off runs the node exactly once as usual.
+      </P>
+
+      <H3>Settings</H3>
+      <UL>
+        <li><Code>Rounds</Code> — how many times to run (default <Code>10</Code>, range <Code>1–1000</Code>). Values are clamped to this range.</li>
+        <li><Code>Max errors</Code> — error budget (default <Code>3</Code>). The loop stops once this many rounds have failed in a row; a successful round resets the count.</li>
+        <li><Code>Stop condition</Code> — an optional JavaScript expression. When it evaluates truthy after a successful round, the loop stops early. Leave it blank to simply run all rounds.</li>
+      </UL>
+
+      <H3>Stop condition</H3>
+      <P>
+        The expression receives two variables: <Code>response</Code> (the full result, with the parsed body on{' '}
+        <Code>response.data</Code>) and <Code>output</Code> (the raw step output). Return a boolean. For example,
+        to poll until a job reports done:
+      </P>
+      <Block>{`response.data.status === "done"`}</Block>
+      <P>
+        Internally this is compiled once as{' '}
+        <Code>new Function(&apos;response&apos;, &apos;output&apos;, &apos;return (&lt;expr&gt;)&apos;)</Code>, so it is a single
+        expression — no statements or semicolons.
+      </P>
+
+      <H3>While it runs</H3>
+      <P>
+        The node shows a live badge <Code>🔁 loop (i/N)</Code> — the current round over the total — and a{' '}
+        <strong>⏹ Stop</strong> button. Press <strong>Stop</strong> to end the loop at the next round boundary
+        (the in-flight round finishes; no new round starts).
+      </P>
+
+      <H3>Hard limits</H3>
+      <P>A loop always ends on whichever comes first:</P>
+      <UL>
+        <li>all <Code>Rounds</Code> completed,</li>
+        <li>the <strong>stop condition</strong> becomes true,</li>
+        <li>the <strong>error budget</strong> is exhausted,</li>
+        <li>you press <strong>Stop</strong>,</li>
+        <li>a safety cap is hit: <strong>max 1000 rounds</strong> and <strong>max 30 minutes</strong> of wall-clock time.</li>
+      </UL>
+    </section>
+  );
+}
+
 function Templates() {
   return (
     <section>
@@ -305,6 +363,7 @@ const BODIES: Record<string, () => React.JSX.Element> = {
   http: Http,
   server: Server,
   execution: Execution,
+  loop: LoopMode,
   templates: Templates,
   tips: Tips,
 };

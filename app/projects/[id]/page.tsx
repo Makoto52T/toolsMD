@@ -14,6 +14,7 @@ import ReactFlow, {
   Node as RFNode,
   NodeChange,
   BackgroundVariant,
+  SelectionMode,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -94,6 +95,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   } | null>(null);
   // Per-node spinner state (single-node execute).
   const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
+  // Loop mode: which nodes are currently looping. Keyed by nodeId ->
+  // { round, total } where round is the 1-based current iteration and total is
+  // the configured number of rounds. A node present in the map is looping.
+  const [loopState, setLoopState] = useState<
+    Record<string, { round: number; total: number }>
+  >({});
   // Desktop output column collapse (default expanded).
   const [outputCollapsed, setOutputCollapsed] = useState(false);
 
@@ -293,6 +300,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const doDeleteNode = async () => {
     if (!deleteTarget) return;
     const nodeId = deleteTarget.id;
+    // Tear down any active loop on this node before it disappears.
+    stopLoopRef.current(nodeId);
     try {
       await fetch(`/api/projects/${id}/nodes/${nodeId}`, { method: 'DELETE' });
       setNodes((prev) => prev.filter((n) => n.id !== nodeId));
@@ -433,6 +442,187 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     },
     [id, toast],
   );
+
+  // ---- Loop mode (client-side bounded for-loop) ----
+  // A node id present here == currently looping. The boolean is the Stop flag:
+  // setting it true breaks the running for-loop on its next iteration boundary.
+  // We check `has(nodeId)` to know a loop is active and `get(nodeId) === true`
+  // to know Stop was requested (or the node/page went away).
+  const shouldStopRef = useRef<Map<string, boolean>>(new Map());
+
+  // Fire one loop iteration against the single-node execute route and return the
+  // raw ExecResult so the caller can evaluate the stop condition. Does NOT touch
+  // toast/spinner — the loop badge is the only visible status during a loop.
+  const runNodeForLoop = useCallback(
+    async (nodeId: string): Promise<ExecResult | undefined> => {
+      try {
+        const res = await fetch(`/api/projects/${id}/nodes/${nodeId}/execute`, {
+          method: 'POST',
+        });
+        const data = await res.json();
+        // Adopt any tags written by output bindings so the loop reflects fresh state.
+        if (Array.isArray(data?.tags)) setTags(data.tags);
+        const result: ExecResult | undefined = data?.result;
+        if (result) {
+          // Mirror the latest round's output into the result panel so the user can
+          // watch the response change while the loop runs.
+          const node = nodesRef.current.find((n) => n.id === nodeId);
+          const missing: MissingBinding[] = Array.isArray(data?.missingBindings)
+            ? data.missingBindings
+            : [];
+          setExecPanel({
+            title: node?.name ?? 'Node',
+            results: [result],
+            missingBindings: missing,
+          });
+        }
+        return result;
+      } catch {
+        return undefined;
+      }
+    },
+    [id],
+  );
+
+  // Request the for-loop to break on its next iteration boundary. The loop body
+  // re-checks the flag after each await, so this stops it cooperatively without
+  // killing an in-flight request. setLoopState clears the badge immediately.
+  const stopLoop = useCallback((nodeId: string) => {
+    if (shouldStopRef.current.has(nodeId)) {
+      shouldStopRef.current.set(nodeId, true);
+    }
+    setLoopState((prev) => {
+      if (!(nodeId in prev)) return prev;
+      const next = { ...prev };
+      delete next[nodeId];
+      return next;
+    });
+  }, []);
+
+  const startLoop = useCallback(
+    async (nodeId: string) => {
+      // Guard: already looping.
+      if (shouldStopRef.current.has(nodeId)) return;
+      const node = nodesRef.current.find((n) => n.id === nodeId);
+      const cfg = (node?.config ?? {}) as Record<string, any>;
+      // Hard cap: 1–1000 rounds. Anything above is clamped at runtime too
+      // (the UI also clamps, but never trust the stored value alone).
+      const rounds = Math.min(1000, Math.max(1, Math.floor(Number(cfg.loopRounds) || 10)));
+      // Hard cap: a loop may run at most 30 minutes regardless of round count.
+      const MAX_LOOP_MS = 1_800_000;
+      const maxErrors = Math.max(1, Number(cfg.loopMaxErrors) || 3);
+      const stopExpr =
+        typeof cfg.loopStopCondition === 'string' ? cfg.loopStopCondition.trim() : '';
+
+      // Compile the stop condition once. response = axios-style http result
+      // ({ ...http, data: output }); output = the node's raw output. A bad
+      // expression is reported and aborts before the loop starts.
+      let stopFn: ((response: any, output: any) => boolean) | null = null;
+      if (stopExpr) {
+        try {
+          // eslint-disable-next-line no-new-func
+          stopFn = new Function(
+            'response',
+            'output',
+            'return (' + stopExpr + ');',
+          ) as (response: any, output: any) => boolean;
+        } catch (e: any) {
+          toast.error(`Loop stop condition invalid: ${e?.message ?? 'syntax error'}`);
+          return;
+        }
+      }
+
+      // Register the active loop (Stop flag starts false) and show round 0/N.
+      shouldStopRef.current.set(nodeId, false);
+      setLoopState((prev) => ({ ...prev, [nodeId]: { round: 0, total: rounds } }));
+
+      let errorCount = 0;
+      let stoppedEarly = false;
+      const startedAt = Date.now();
+
+      // for (let i = 0; i < rounds; i++) { await executeNode(); if (stop) break; }
+      for (let i = 0; i < rounds; i++) {
+        // Stop requested (button / unmount / node deleted) before this round.
+        if (shouldStopRef.current.get(nodeId) === true) {
+          stoppedEarly = true;
+          break;
+        }
+
+        // Wall-clock budget: stop before starting a round once 30 min elapse.
+        if (Date.now() - startedAt >= MAX_LOOP_MS) {
+          toast.warning('Loop stopped: 30-minute limit reached');
+          stoppedEarly = true;
+          break;
+        }
+
+        // Reflect the round we're about to run (1-based) in the badge.
+        setLoopState((prev) =>
+          nodeId in prev ? { ...prev, [nodeId]: { round: i + 1, total: rounds } } : prev,
+        );
+
+        const result = await runNodeForLoop(nodeId);
+
+        // Stop may have fired while awaiting the request — don't start another.
+        if (shouldStopRef.current.get(nodeId) === true) {
+          stoppedEarly = true;
+          break;
+        }
+
+        if (!result || result.status === 'error') {
+          errorCount += 1;
+          if (errorCount >= maxErrors) {
+            toast.warning(`Loop stopped: ${errorCount} consecutive errors`);
+            stoppedEarly = true;
+            break;
+          }
+          continue;
+        }
+
+        // Success: reset the error counter.
+        errorCount = 0;
+
+        if (stopFn) {
+          const response = { ...(result.http ?? {}), data: result.output };
+          let done = false;
+          try {
+            done = !!stopFn(response, result.output);
+          } catch (e: any) {
+            toast.error(`Loop stop condition threw: ${e?.message ?? 'error'}`);
+            stoppedEarly = true;
+            break;
+          }
+          if (done) {
+            toast.success('Loop stop condition met');
+            stoppedEarly = true;
+            break;
+          }
+        }
+      }
+
+      if (!stoppedEarly && shouldStopRef.current.get(nodeId) !== true) {
+        toast.success(`Loop finished (${rounds} rounds)`);
+      }
+
+      // Always tear down: drop the active-loop entry and clear the badge.
+      shouldStopRef.current.delete(nodeId);
+      setLoopState((prev) => {
+        if (!(nodeId in prev)) return prev;
+        const next = { ...prev };
+        delete next[nodeId];
+        return next;
+      });
+    },
+    [runNodeForLoop, toast],
+  );
+
+  // On unmount / navigate-away, flag every active loop to stop so its for-loop
+  // breaks at the next boundary instead of firing more requests.
+  useEffect(() => {
+    const flags = shouldStopRef.current;
+    return () => {
+      flags.forEach((_v, k) => flags.set(k, true));
+    };
+  }, []);
 
   // ---- Tags ----
   // Persist the whole tag array (atomic replace). The PUT response returns the
@@ -648,19 +838,38 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const executeOneRef = useRef(executeOne);
   executeOneRef.current = executeOne;
 
+  // Loop start/stop in refs so buildData (deps: runningNodeId, loopState) doesn't
+  // re-subscribe to them every render.
+  const startLoopRef = useRef(startLoop);
+  startLoopRef.current = startLoop;
+  const stopLoopRef = useRef(stopLoop);
+  stopLoopRef.current = stopLoop;
+
   const buildData = useCallback(
-    (n: ApiNode): FlowNodeData => ({
-      name: n.name,
-      type: n.type,
-      description: n.description,
-      config: n.config as Record<string, any> | undefined,
-      executing: runningNodeId === n.id,
-      onEdit: (nid: string) => setEditingNode(nodesRef.current.find((x) => x.id === nid) ?? null),
-      onDelete: (nid: string) =>
-        setDeleteTarget(nodesRef.current.find((x) => x.id === nid) ?? null),
-      onExecute: (nid: string) => executeOneRef.current(nid),
-    }),
-    [runningNodeId],
+    (n: ApiNode): FlowNodeData => {
+      const cfg = (n.config ?? {}) as Record<string, any>;
+      const loopEnabled = cfg.loopEnabled === true;
+      const looping = n.id in loopState;
+      return {
+        name: n.name,
+        type: n.type,
+        description: n.description,
+        config: n.config as Record<string, any> | undefined,
+        executing: runningNodeId === n.id,
+        looping,
+        loopRound: loopState[n.id]?.round,
+        loopTotal: loopState[n.id]?.total,
+        onEdit: (nid: string) => setEditingNode(nodesRef.current.find((x) => x.id === nid) ?? null),
+        onDelete: (nid: string) =>
+          setDeleteTarget(nodesRef.current.find((x) => x.id === nid) ?? null),
+        // When loop mode is enabled, the Run button kicks off the loop instead of
+        // a one-shot execute. The Stop button (shown while looping) tears it down.
+        onExecute: (nid: string) =>
+          loopEnabled ? startLoopRef.current(nid) : executeOneRef.current(nid),
+        onStopLoop: (nid: string) => stopLoopRef.current(nid),
+      };
+    },
+    [runningNodeId, loopState],
   );
 
   // Reconcile RFNode[] with the source-of-truth ApiNode[] WITHOUT discarding the
@@ -860,6 +1069,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               maxZoom={2}
               proOptions={{ hideAttribution: true }}
               deleteKeyCode={['Backspace', 'Delete']}
+              // Shift+drag = rubber-band select; plain drag = pan canvas.
+              selectionKeyCode="Shift"
+              // Partial: a node only needs to be partly inside the box to select.
+              selectionMode={SelectionMode.Partial}
+              // Shift+Click or Cmd+Click adds/removes a node from the selection.
+              multiSelectionKeyCode={['Shift', 'Meta']}
             >
               <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd5e1" />
               <Controls showInteractive={false} />
@@ -985,6 +1200,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             {editingNode.type === 'server' && (
               <ServerNodeFields node={editingNode} tags={tags} onChange={setEditingNode} />
             )}
+
+            <LoopNodeFields node={editingNode} onChange={setEditingNode} />
           </div>
         )}
       </Modal>
@@ -1196,6 +1413,123 @@ function OutputColumn({
 // A server node = a running frontend/backend process. The user picks a stack
 // (category -> language -> framework) and a host/port for the health-check.
 const CUSTOM_FRAMEWORK = '__custom__';
+
+// Loop mode controls — a collapsible section available on any node type. When
+// enabled, the node's Run button runs a bounded for-loop on the client
+// (page.tsx startLoop) for `loopRounds` iterations, breaking early if the stop
+// condition is met, the error budget is exhausted, or the user hits Stop.
+function LoopNodeFields({
+  node,
+  onChange,
+}: {
+  node: ApiNode;
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  const enabled = cfg.loopEnabled === true;
+  const rounds = cfg.loopRounds != null ? String(cfg.loopRounds) : '';
+  const maxErrors = cfg.loopMaxErrors != null ? String(cfg.loopMaxErrors) : '';
+  const stopCondition =
+    typeof cfg.loopStopCondition === 'string' ? cfg.loopStopCondition : '';
+
+  const setCfg = (patch: Record<string, any>) =>
+    onChange({ ...node, config: { ...cfg, ...patch } });
+
+  return (
+    <div className="rounded-lg border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] p-3">
+      <label className="flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          data-testid="loop-enabled-toggle"
+          checked={enabled}
+          onChange={(e) => setCfg({ loopEnabled: e.target.checked })}
+          className="h-4 w-4 accent-[var(--color-primary)]"
+        />
+        <span className="text-sm font-semibold text-[var(--color-neutral-800)]">
+          🔁 เปิด Loop mode
+        </span>
+      </label>
+      <p className="mt-1 pl-6 text-xs text-[var(--color-neutral-500)]">
+        เมื่อเปิด ปุ่ม Run จะวน node เป็นจำนวนรอบที่กำหนด (sequential) จนครบ หรือเงื่อนไขหยุดเป็นจริง หรือกด Stop
+      </p>
+
+      {enabled && (
+        <div className="mt-3 flex flex-col gap-3 pl-6">
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+                Rounds
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={1000}
+                step={1}
+                data-testid="loop-rounds-input"
+                value={rounds}
+                placeholder="10"
+                onChange={(e) => {
+                  if (e.target.value === '') {
+                    setCfg({ loopRounds: undefined });
+                    return;
+                  }
+                  // Clamp 1–1000 as the user types; runtime clamps again.
+                  const n = Math.floor(Number(e.target.value));
+                  const clamped = Number.isNaN(n) ? 1 : Math.min(1000, Math.max(1, n));
+                  setCfg({ loopRounds: clamped });
+                }}
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              />
+              <p className="mt-0.5 text-[10px] text-[var(--color-neutral-400)]">1–1000 rounds (default 10)</p>
+            </div>
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+                Max errors
+              </label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                data-testid="loop-maxerrors-input"
+                value={maxErrors}
+                placeholder="3"
+                onChange={(e) =>
+                  setCfg({
+                    loopMaxErrors:
+                      e.target.value === '' ? undefined : Number(e.target.value),
+                  })
+                }
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              />
+              <p className="mt-0.5 text-[10px] text-[var(--color-neutral-400)]">
+                หยุดเมื่อ error สะสมถึง
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+              Stop condition (JS expression)
+            </label>
+            <textarea
+              rows={2}
+              data-testid="loop-stopcondition-input"
+              value={stopCondition}
+              placeholder={'response.data.status === "done"'}
+              onChange={(e) => setCfg({ loopStopCondition: e.target.value })}
+              className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+            />
+            <p className="mt-1 text-[10px] text-[var(--color-neutral-400)]">
+              ตัวแปร: <code className="font-mono">response</code> (axios-style,
+              มี <code className="font-mono">response.data</code> = body) และ{' '}
+              <code className="font-mono">output</code> (ผลลัพธ์ดิบ). เว้นว่าง = วนจนกว่าจะกด Stop เอง
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ServerNodeFields({
   node,

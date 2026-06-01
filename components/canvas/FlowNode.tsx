@@ -13,7 +13,14 @@ export interface FlowNodeData {
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
   onExecute: (id: string) => void;
+  // Loop mode: when looping, the Run button becomes Stop and a badge shows the
+  // current round out of the total (i/rounds). onStopLoop flags the client-side
+  // for-loop to break at its next boundary.
+  onStopLoop?: (id: string) => void;
   executing?: boolean;
+  looping?: boolean;
+  loopRound?: number;
+  loopTotal?: number;
 }
 
 function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
@@ -32,6 +39,8 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
     cfg.callMode === 'internal';
   const isRealtimeCall = isInternalCall && cfg.targetKind === 'realtime';
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
+  const loopEnabled = cfg.loopEnabled === true;
+  const looping = data.looping === true;
 
   // Four connection handles (top/bottom/left/right). With ConnectionMode.Loose
   // on the canvas, every handle works as BOTH source and target — the edge's
@@ -126,6 +135,27 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
         </div>
       ) : null}
 
+      {loopEnabled ? (
+        <div className="px-3 pt-2">
+          {looping ? (
+            <span
+              data-testid="loop-status-badge"
+              className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+            >
+              <span className="animate-spin">🔁</span>
+              loop ({data.loopRound ?? 0}/{data.loopTotal ?? 0})
+            </span>
+          ) : (
+            <span
+              data-testid="loop-enabled-badge"
+              className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+            >
+              🔁 loop mode
+            </span>
+          )}
+        </div>
+      ) : null}
+
       {data.description ? (
         <div className="px-3 pt-1.5 text-xs text-[var(--color-neutral-500)] line-clamp-2">
           {data.description}
@@ -133,18 +163,32 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
       ) : null}
 
       <div className="flex gap-1 px-2 py-2">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            data.onExecute(id);
-          }}
-          disabled={data.executing}
-          title={isServer ? 'Health-check this server' : 'Execute this node'}
-          className="nodrag flex-1 rounded-md py-1 text-xs font-medium text-white transition-colors disabled:opacity-60"
-          style={{ background: meta.color }}
-        >
-          {data.executing ? '…' : runLabel}
-        </button>
+        {looping ? (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onStopLoop?.(id);
+            }}
+            title="Stop the loop"
+            data-testid="loop-stop-btn"
+            className="nodrag flex-1 rounded-md bg-[var(--color-danger)] py-1 text-xs font-medium text-white transition-colors hover:opacity-90"
+          >
+            ⏹ Stop
+          </button>
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              data.onExecute(id);
+            }}
+            disabled={data.executing}
+            title={isServer ? 'Health-check this server' : 'Execute this node'}
+            className="nodrag flex-1 rounded-md py-1 text-xs font-medium text-white transition-colors disabled:opacity-60"
+            style={{ background: meta.color }}
+          >
+            {data.executing ? '…' : runLabel}
+          </button>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
