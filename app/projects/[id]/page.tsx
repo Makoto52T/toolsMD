@@ -741,7 +741,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 pannable
                 zoomable
                 nodeColor={(n) => metaFor((n.data as FlowNodeData)?.type ?? '').color}
-                className="!hidden sm:!block"
+                maskColor="rgba(148, 163, 184, 0.25)"
+                style={{ backgroundColor: 'var(--color-neutral-100)' }}
+                className="!hidden sm:!block !border !border-[color:var(--color-neutral-300)] !rounded-[var(--radius-card)] !shadow-[var(--shadow-card)]"
               />
             </ReactFlow>
           )}
