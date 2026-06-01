@@ -22,6 +22,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FullPageSpinner } from '@/components/LoadingSpinner';
 import { useToast } from '@/components/Toast';
 import { FlowNode, FlowNodeData } from '@/components/canvas/FlowNode';
+import { DeletableEdge } from '@/components/canvas/DeletableEdge';
 import { NODE_TYPES, metaFor, nodeDisplayMeta } from '@/components/canvas/nodeMeta';
 import {
   FRONTEND_FRAMEWORKS,
@@ -562,13 +563,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         source: e.sourceNodeId,
         target: e.targetNodeId,
         label: e.label || undefined,
+        type: 'deletable',
         animated: true,
         style: { strokeWidth: 2, stroke: '#94a3b8' },
+        data: { onDelete: deleteEdge },
       })),
-    [edges],
+    [edges, deleteEdge],
   );
 
   const nodeTypes = useMemo(() => ({ tmd: FlowNode }), []);
+  const edgeTypes = useMemo(() => ({ deletable: DeletableEdge }), []);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -680,6 +684,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             nodes={rfNodes}
             edges={rfEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
             onEdgesDelete={onEdgesDelete}
