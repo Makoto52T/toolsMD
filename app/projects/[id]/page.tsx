@@ -775,12 +775,21 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               </select>
             </div>
 
+            {(editingNode.type === 'function' || editingNode.type === 'http-request') && (
+              <CallRoutePicker
+                node={editingNode}
+                nodes={nodes}
+                edges={edges}
+                onChange={setEditingNode}
+              />
+            )}
+
             {editingNode.type === 'http-request' && (
               <HttpNodeFields node={editingNode} tags={tags} onChange={setEditingNode} />
             )}
 
             {editingNode.type === 'server' && (
-              <ServerNodeFields node={editingNode} onChange={setEditingNode} />
+              <ServerNodeFields node={editingNode} tags={tags} onChange={setEditingNode} />
             )}
           </div>
         )}
@@ -836,9 +845,11 @@ const CUSTOM_FRAMEWORK = '__custom__';
 
 function ServerNodeFields({
   node,
+  tags,
   onChange,
 }: {
   node: ApiNode;
+  tags: Tag[];
   onChange: (n: ApiNode) => void;
 }) {
   const cfg = (node.config ?? {}) as Record<string, any>;
@@ -1064,6 +1075,419 @@ function ServerNodeFields({
           {previewUrl}
         </div>
       </div>
+
+      {/* Mock API routes — define routes this server "serves" so a connected
+          function/http node can fire one and get a mock response (no network). */}
+      <RoutesEditor node={node} tags={tags} onChange={onChange} />
+    </div>
+  );
+}
+
+// ---------- Mock route editor (server node) ----------
+// A server node in mock mode defines API routes (method + path + status +
+// JSON response). A function/http node wired to this server can call a route
+// and get the response resolved entirely in-process. {{tag}} placeholders in
+// the response are interpolated at execute time.
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
+
+interface MockRouteDraft {
+  id: string;
+  method: string;
+  path: string;
+  statusCode: number;
+  response: unknown;
+}
+
+function genRouteId(): string {
+  return `r-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeRoutes(raw: unknown): MockRouteDraft[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((r): r is Record<string, unknown> => r != null && typeof r === 'object')
+    .map((r) => ({
+      id: typeof r.id === 'string' && r.id ? r.id : genRouteId(),
+      method: String(r.method ?? 'GET').toUpperCase(),
+      path: typeof r.path === 'string' ? r.path : '/',
+      statusCode:
+        typeof r.statusCode === 'number' && r.statusCode > 0 ? r.statusCode : 200,
+      response: r.response,
+    }));
+}
+
+function RoutesEditor({
+  node,
+  tags,
+  onChange,
+}: {
+  node: ApiNode;
+  tags: Tag[];
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  const routes = normalizeRoutes(cfg.routes);
+  const serveMode = cfg.serveMode === 'proxy' ? 'proxy' : 'mock';
+
+  // Which route row is expanded for editing (id) or 'new' for the add form.
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const writeRoutes = (next: MockRouteDraft[]) =>
+    onChange({ ...node, config: { ...cfg, serveMode, routes: next } });
+
+  const addRoute = () => {
+    const r: MockRouteDraft = {
+      id: genRouteId(),
+      method: 'GET',
+      path: '/',
+      statusCode: 200,
+      response: {},
+    };
+    writeRoutes([...routes, r]);
+    setEditingId(r.id);
+  };
+
+  const updateRoute = (id: string, patch: Partial<MockRouteDraft>) =>
+    writeRoutes(routes.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const deleteRoute = (id: string) => {
+    writeRoutes(routes.filter((r) => r.id !== id));
+    if (editingId === id) setEditingId(null);
+  };
+
+  const methodColor = (m: string) =>
+    ({
+      GET: '#0d9488',
+      POST: '#2563eb',
+      PUT: '#d97706',
+      PATCH: '#7c3aed',
+      DELETE: '#dc2626',
+    })[m] ?? '#64748b';
+
+  return (
+    <div
+      data-testid="routes-editor"
+      className="flex flex-col gap-2 rounded-xl border border-[var(--color-neutral-200)] bg-white p-3"
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold uppercase tracking-wide text-[var(--color-neutral-500)]">
+          API Routes
+        </span>
+        <span className="rounded-full bg-[var(--color-neutral-100)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-neutral-600)]">
+          {serveMode} · {routes.length} route{routes.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      {routes.length === 0 ? (
+        <p className="text-[11px] text-[var(--color-neutral-400)]">
+          No routes yet. Add a route so a connected node can call it and get a mock response.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {routes.map((r) => (
+            <div key={r.id} data-testid="route-row" className="rounded-lg border border-[var(--color-neutral-200)]">
+              <div className="flex items-center gap-2 px-2 py-1.5">
+                <span
+                  className="rounded px-1.5 py-0.5 text-[10px] font-bold text-white"
+                  style={{ background: methodColor(r.method) }}
+                >
+                  {r.method}
+                </span>
+                <code className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-neutral-800)]">
+                  {r.path || '/'}
+                </code>
+                <span className="font-mono text-[10px] text-[var(--color-neutral-400)]">
+                  {r.statusCode}
+                </span>
+                <button
+                  type="button"
+                  data-testid="route-edit"
+                  onClick={() => setEditingId(editingId === r.id ? null : r.id)}
+                  className="rounded px-1 text-xs font-medium text-[var(--color-primary)] hover:underline"
+                >
+                  {editingId === r.id ? 'close' : 'edit'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="route-delete"
+                  onClick={() => deleteRoute(r.id)}
+                  className="rounded px-1 text-xs font-medium text-[var(--color-danger)] hover:underline"
+                  aria-label="Delete route"
+                >
+                  ✕
+                </button>
+              </div>
+              {editingId === r.id && (
+                <RouteForm route={r} tags={tags} onPatch={(p) => updateRoute(r.id, p)} />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        data-testid="route-add"
+        onClick={addRoute}
+        className="self-start rounded-lg border border-dashed border-[var(--color-neutral-300)] px-2 py-1 text-[11px] text-[var(--color-neutral-600)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+      >
+        + add route
+      </button>
+    </div>
+  );
+}
+
+function RouteForm({
+  route,
+  tags,
+  onPatch,
+}: {
+  route: MockRouteDraft;
+  tags: Tag[];
+  onPatch: (patch: Partial<MockRouteDraft>) => void;
+}) {
+  // Response JSON edited as text (uncontrolled) — committed on blur. Tag picker
+  // splices {{key}} at the caret, same pattern as the http body editor.
+  const responseText =
+    route.response != null ? JSON.stringify(route.response, null, 2) : '';
+  const respRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const parseMaybeJson = (text: string): unknown => {
+    const t = text.trim();
+    if (!t) return undefined;
+    try {
+      return JSON.parse(t);
+    } catch {
+      return text;
+    }
+  };
+
+  const insertToken = (key: string) => {
+    const el = respRef.current;
+    const token = `{{${key}}}`;
+    if (!el) return;
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + token + el.value.slice(end);
+    el.value = next;
+    const caret = start + token.length;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+    onPatch({ response: parseMaybeJson(next) });
+  };
+
+  return (
+    <div
+      data-testid="route-form"
+      className="flex flex-col gap-2 border-t border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] px-2 py-2"
+    >
+      <div className="grid grid-cols-[100px_1fr_80px] gap-2">
+        <select
+          value={route.method}
+          data-testid="route-method"
+          onChange={(e) => onPatch({ method: e.target.value })}
+          className="rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+        >
+          {HTTP_METHODS.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          value={route.path}
+          data-testid="route-path"
+          placeholder="/users"
+          onChange={(e) => onPatch({ path: e.target.value })}
+          className="min-w-0 rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+        />
+        <input
+          type="number"
+          value={route.statusCode}
+          data-testid="route-status"
+          onChange={(e) =>
+            onPatch({ statusCode: Number(e.target.value) || 200 })
+          }
+          className="rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+        />
+      </div>
+
+      <label className="block text-[10px] font-medium uppercase tracking-wide text-[var(--color-neutral-500)]">
+        Response (JSON)
+      </label>
+      <textarea
+        ref={respRef}
+        rows={4}
+        defaultValue={responseText}
+        data-testid="route-response"
+        placeholder='{ "access_token": "mock-123" }'
+        onBlur={(e) => onPatch({ response: parseMaybeJson(e.target.value) })}
+        className="w-full rounded-lg border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+      />
+      <div className="flex flex-wrap gap-1.5" data-testid="route-response-tag-picker">
+        {tags.length === 0 ? (
+          <span className="text-[10px] text-[var(--color-neutral-400)]">No tags defined yet.</span>
+        ) : (
+          tags.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => insertToken(t.key)}
+              data-testid={`route-insert-tag-${t.key}`}
+              className="rounded-full border border-[var(--color-neutral-300)] bg-white px-2 py-0.5 font-mono text-[10px] text-[var(--color-neutral-700)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              title={`Insert {{${t.key}}}`}
+            >
+              {'{{'}{t.key}{'}}'}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Internal call (mock server route) picker ----------
+// Shown for function / http nodes. When the node has an outgoing edge to a
+// server node, the user can switch it to "call a mock route" mode and pick one
+// of the target server's routes. Stored as callMode/targetServerId/
+// targetMethod/targetPath in the node config; the executor resolves it.
+function CallRoutePicker({
+  node,
+  nodes,
+  edges,
+  onChange,
+}: {
+  node: ApiNode;
+  nodes: ApiNode[];
+  edges: ApiEdge[];
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  const callMode: 'normal' | 'internal' =
+    cfg.callMode === 'internal' ? 'internal' : 'normal';
+
+  // Server nodes reachable by an outgoing edge from this node.
+  const serverTargets = useMemo(() => {
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    return edges
+      .filter((e) => e.sourceNodeId === node.id)
+      .map((e) => byId.get(e.targetNodeId))
+      .filter((n): n is ApiNode => !!n && n.type === 'server');
+  }, [nodes, edges, node.id]);
+
+  const setCfg = (patch: Record<string, any>) =>
+    onChange({ ...node, config: { ...cfg, ...patch } });
+
+  if (serverTargets.length === 0) {
+    return (
+      <div
+        data-testid="call-route-picker"
+        className="rounded-lg border border-dashed border-[var(--color-neutral-300)] bg-[var(--color-neutral-50)] p-3 text-[11px] text-[var(--color-neutral-500)]"
+      >
+        🔌 Connect this node to a <strong>server node</strong> (draw an edge) to call one of its
+        mock API routes.
+      </div>
+    );
+  }
+
+  // Selected server (default: first target). Routes of that server.
+  const selectedServerId =
+    typeof cfg.targetServerId === 'string' &&
+    serverTargets.some((s) => s.id === cfg.targetServerId)
+      ? (cfg.targetServerId as string)
+      : serverTargets[0].id;
+  const selectedServer = serverTargets.find((s) => s.id === selectedServerId)!;
+  const routes = normalizeRoutes(
+    (selectedServer.config as Record<string, any> | undefined)?.routes,
+  );
+
+  const currentRouteKey =
+    callMode === 'internal'
+      ? `${String(cfg.targetMethod ?? 'GET').toUpperCase()} ${String(cfg.targetPath ?? '/')}`
+      : '';
+
+  return (
+    <div
+      data-testid="call-route-picker"
+      className="flex flex-col gap-2 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 p-3"
+    >
+      <label className="flex items-center gap-2 text-xs font-medium text-[var(--color-neutral-700)]">
+        <input
+          type="checkbox"
+          data-testid="call-internal-toggle"
+          checked={callMode === 'internal'}
+          onChange={(e) =>
+            setCfg(
+              e.target.checked
+                ? {
+                    callMode: 'internal',
+                    targetServerId: selectedServerId,
+                    targetMethod:
+                      cfg.targetMethod ?? routes[0]?.method ?? 'GET',
+                    targetPath: cfg.targetPath ?? routes[0]?.path ?? '/',
+                  }
+                : { callMode: 'normal' },
+            )
+          }
+        />
+        Call a mock server route
+        <span className="rounded-full bg-[var(--color-primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+          virtual
+        </span>
+      </label>
+
+      {callMode === 'internal' && (
+        <>
+          {serverTargets.length > 1 && (
+            <select
+              value={selectedServerId}
+              data-testid="call-server-select"
+              onChange={(e) =>
+                setCfg({ targetServerId: e.target.value, targetMethod: 'GET', targetPath: '' })
+              }
+              className="rounded-lg border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+            >
+              {serverTargets.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {routes.length === 0 ? (
+            <p className="text-[11px] text-[var(--color-warning)]">
+              ⚠ <strong>{selectedServer.name}</strong> has no routes defined. Add routes on that
+              server node first.
+            </p>
+          ) : (
+            <select
+              value={currentRouteKey}
+              data-testid="call-route-select"
+              onChange={(e) => {
+                const [m, ...rest] = e.target.value.split(' ');
+                setCfg({
+                  targetServerId: selectedServerId,
+                  targetMethod: m,
+                  targetPath: rest.join(' '),
+                });
+              }}
+              className="rounded-lg border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+            >
+              <option value="">(select a route)</option>
+              {routes.map((r) => (
+                <option key={r.id} value={`${r.method} ${r.path}`}>
+                  {r.method} {r.path}
+                </option>
+              ))}
+            </select>
+          )}
+          <p className="text-[10px] text-[var(--color-neutral-500)]">
+            Resolved in-process from the mock server — no real network request is made.
+          </p>
+        </>
+      )}
     </div>
   );
 }

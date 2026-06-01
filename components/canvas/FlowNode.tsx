@@ -22,6 +22,12 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   const cfg = data.config ?? {};
   const framework: string = isServer ? String(cfg.framework ?? '') : '';
   const port = isServer && cfg.port != null && cfg.port !== '' ? String(cfg.port) : '';
+  const routeCount =
+    isServer && Array.isArray(cfg.routes) ? cfg.routes.length : 0;
+  // A function/http node firing a mock route shows a small "mock" hint.
+  const isInternalCall =
+    (data.type === 'function' || data.type === 'http-request') &&
+    cfg.callMode === 'internal';
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
 
   return (
@@ -69,6 +75,25 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
               :{port}
             </span>
           ) : null}
+          {routeCount > 0 ? (
+            <span
+              data-testid="route-count-badge"
+              className="rounded-md bg-[var(--color-neutral-800)] px-1.5 py-0.5 text-[10px] font-medium text-white"
+            >
+              {routeCount} route{routeCount === 1 ? '' : 's'}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isInternalCall ? (
+        <div className="px-3 pt-2">
+          <span
+            data-testid="mock-call-badge"
+            className="rounded-md bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+          >
+            ⚡ mock: {String(cfg.targetMethod ?? 'GET')} {String(cfg.targetPath ?? '/')}
+          </span>
         </div>
       ) : null}
 

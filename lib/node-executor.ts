@@ -54,6 +54,31 @@ export interface ServerMeta {
   durationMs: number;
 }
 
+// Present when a function/http node resolved against a *mock* server route
+// (callMode === 'internal') instead of making a real network request. The
+// response is served from the target server node's `routes` config — nothing
+// leaves the process. `virtual: true` lets the UI flag "this didn't hit the
+// network" so a mock isn't mistaken for a live server.
+export interface MockMeta {
+  virtual: true;
+  // The server node that served the route.
+  serverNodeId: string;
+  serverNodeName?: string;
+  method: string;
+  path: string;
+  statusCode: number;
+  durationMs: number;
+}
+
+// A single mock route defined on a server node (node.config.routes[]).
+export interface MockRoute {
+  id?: string;
+  method: string;
+  path: string;
+  statusCode?: number;
+  response?: unknown;
+}
+
 export interface ExecutionResult {
   nodeId: string;
   nodeName?: string;
@@ -66,6 +91,8 @@ export interface ExecutionResult {
   http?: HttpMeta;
   // Present for server nodes (health-check result).
   server?: ServerMeta;
+  // Present when the node resolved against a mock server route (no real network).
+  mock?: MockMeta;
 }
 
 // Hard cap so a hung endpoint can't keep a serverless invocation alive forever.
@@ -88,6 +115,133 @@ function buildServerUrl(cfg: Record<string, any>): string {
   const scheme = port === 443 ? 'https' : 'http';
   const authority = port != null ? `${host}:${port}` : host;
   return `${scheme}://${authority}${path}`;
+}
+
+// Normalise a path for matching: strip a query string, collapse a trailing
+// slash, ensure a leading slash. So "/users/", "/users" and "/users?x=1" all
+// compare equal to the route the user defined as "/users".
+function normalizePath(p: unknown): string {
+  let s = String(p ?? '').trim();
+  const q = s.indexOf('?');
+  if (q !== -1) s = s.slice(0, q);
+  if (!s.startsWith('/')) s = '/' + s;
+  if (s.length > 1 && s.endsWith('/')) s = s.replace(/\/+$/, '');
+  return s || '/';
+}
+
+// Context threaded through executeNode so a node can resolve an internal mock
+// call: it needs the full node list (to find the server it points at) and the
+// edges (to confirm the connection / find the default target).
+export interface ExecContext {
+  nodes: PlannerNode[];
+  edges: Edge[];
+}
+
+// Pull the mock routes off a server node's config, defensively.
+function routesOf(node: PlannerNode | undefined): MockRoute[] {
+  const raw = node?.config?.routes;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (r): r is MockRoute =>
+      r != null && typeof r === 'object' && typeof (r as any).path === 'string',
+  );
+}
+
+// Resolve which server node a function/http node should call. Preference order:
+//   1. an explicit config.targetServerId (set by the UI when the user picks a
+//      route), as long as it's a server node reachable by an edge.
+//   2. the single server node at the end of an outgoing edge (the common case:
+//      one edge function -> server).
+// Returns undefined if the node isn't wired to any server node.
+function resolveTargetServer(
+  node: PlannerNode,
+  ctx: ExecContext,
+): PlannerNode | undefined {
+  const byId = new Map(ctx.nodes.map((n) => [n.id, n]));
+  const serverTargets = ctx.edges
+    .filter((e) => e.sourceNodeId === node.id)
+    .map((e) => byId.get(e.targetNodeId))
+    .filter((n): n is PlannerNode => !!n && n.type === 'server');
+
+  const explicitId = node.config?.targetServerId;
+  if (typeof explicitId === 'string' && explicitId) {
+    const hit = serverTargets.find((s) => s.id === explicitId);
+    if (hit) return hit;
+  }
+  return serverTargets[0];
+}
+
+// Run a node's configured internal call against a mock server route. Returns an
+// ExecutionResult (success with the interpolated response, or a friendly error
+// if the route isn't defined). Never throws.
+function executeInternalCall(
+  node: PlannerNode,
+  ctx: ExecContext,
+  tags: Tag[],
+): ExecutionResult {
+  const started = Date.now();
+  const server = resolveTargetServer(node, ctx);
+  if (!server) {
+    return {
+      nodeId: node.id,
+      status: 'error',
+      error: 'Internal call: this node is not connected to a server node.',
+    };
+  }
+  const wantMethod = String(node.config?.targetMethod ?? 'GET').toUpperCase();
+  const wantPath = normalizePath(node.config?.targetPath ?? '/');
+  const routes = routesOf(server);
+  const match = routes.find(
+    (r) =>
+      String(r.method ?? 'GET').toUpperCase() === wantMethod &&
+      normalizePath(r.path) === wantPath,
+  );
+
+  if (!match) {
+    return {
+      nodeId: node.id,
+      status: 'error',
+      error: `Route not defined on ${server.name}: ${wantMethod} ${wantPath}`,
+      mock: {
+        virtual: true,
+        serverNodeId: server.id,
+        serverNodeName: server.name,
+        method: wantMethod,
+        path: wantPath,
+        statusCode: 404,
+        durationMs: Date.now() - started,
+      },
+    };
+  }
+
+  const statusCode =
+    typeof match.statusCode === 'number' && match.statusCode > 0
+      ? match.statusCode
+      : 200;
+  // Interpolate {{tag}} placeholders in the mock response (strings, nested or
+  // top-level) so a mock can echo dynamic values from earlier steps.
+  const output = interpolateDeep(match.response ?? null, tags).value;
+  const mock: MockMeta = {
+    virtual: true,
+    serverNodeId: server.id,
+    serverNodeName: server.name,
+    method: wantMethod,
+    path: normalizePath(match.path),
+    statusCode,
+    durationMs: Date.now() - started,
+  };
+  // A non-2xx mock status is reported as an error (mirrors http behaviour) but
+  // still returns the body so bindings/inspection work.
+  if (statusCode < 200 || statusCode >= 300) {
+    return {
+      nodeId: node.id,
+      status: 'error',
+      error: `HTTP ${statusCode} (mock)`,
+      output,
+      mock,
+    };
+  }
+  return { nodeId: node.id, status: 'success', output, mock };
 }
 
 // Resolve an array of tag ids (referenced by an http node config) into
@@ -159,9 +313,22 @@ export function applyOutputBindings(
 export async function executeNode(
   node: PlannerNode,
   inputs: Record<string, any>,
-  tags: Tag[] = []
+  tags: Tag[] = [],
+  ctx?: ExecContext,
 ): Promise<ExecutionResult> {
   try {
+    // Internal mock call: a function/http node wired to a server node can fire
+    // one of that server's mock routes instead of running its own logic /
+    // hitting the network. Resolved fully in-process (works on Vercel, no
+    // deploy). Only applies when the user opted in via callMode === 'internal'.
+    if (
+      node.config?.callMode === 'internal' &&
+      (node.type === 'function' || node.type === 'http-request') &&
+      ctx
+    ) {
+      return executeInternalCall(node, ctx, tags);
+    }
+
     switch (node.type) {
       case 'function': {
         // Execute JavaScript function from config
@@ -510,12 +677,13 @@ export async function executeWorkflow(
   let currentTags = tags;
   let tagsChanged = false;
   const missingBindings: MissingBinding[] = [];
+  const ctx: ExecContext = { nodes, edges };
 
   for (const nodeId of order) {
     const node = nodes.find((n) => n.id === nodeId)!;
     const inputs = getNodeInputs(nodeId, edges, outputs);
 
-    const result = await executeNode(node, inputs, currentTags);
+    const result = await executeNode(node, inputs, currentTags, ctx);
     result.nodeName = node.name;
     result.nodeType = node.type;
     results.push(result);
@@ -553,9 +721,10 @@ export interface SingleRunResult {
 // immediately, n8n-style. Applies output bindings on success.
 export async function executeSingleNode(
   node: PlannerNode,
-  tags: Tag[] = []
+  tags: Tag[] = [],
+  ctx?: ExecContext,
 ): Promise<SingleRunResult> {
-  const result = await executeNode(node, {}, tags);
+  const result = await executeNode(node, {}, tags, ctx);
   result.nodeName = node.name;
   result.nodeType = node.type;
 

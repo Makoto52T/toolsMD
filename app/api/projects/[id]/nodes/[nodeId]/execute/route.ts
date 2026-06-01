@@ -25,6 +25,8 @@ export async function POST(
   const { result, tags, missingBindings, tagsChanged } = await executeSingleNode(
     node,
     project.tags,
+    // Context so a node wired to a server node can resolve an internal mock route.
+    { nodes: project.nodes, edges: project.edges },
   );
 
   // Persist tags written by output bindings (success/2xx only — executeSingleNode

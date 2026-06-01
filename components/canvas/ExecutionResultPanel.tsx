@@ -25,6 +25,17 @@ export interface ExecServerMeta {
   durationMs: number;
 }
 
+// Mirrors lib/node-executor.ts MockMeta (internal mock-route call).
+export interface ExecMockMeta {
+  virtual: true;
+  serverNodeId: string;
+  serverNodeName?: string;
+  method: string;
+  path: string;
+  statusCode: number;
+  durationMs: number;
+}
+
 export interface ExecResult {
   nodeId: string;
   nodeName?: string;
@@ -34,6 +45,7 @@ export interface ExecResult {
   error?: string;
   http?: ExecHttpMeta;
   server?: ExecServerMeta;
+  mock?: ExecMockMeta;
 }
 
 export interface MissingBinding {
@@ -289,6 +301,7 @@ function ResultCard({
 }) {
   const http = result.http;
   const server = result.server;
+  const mock = result.mock;
   const ok = result.status === 'success';
   return (
     <div className="rounded-xl border border-[var(--color-neutral-200)] bg-white">
@@ -303,6 +316,18 @@ function ResultCard({
           </span>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
+          {mock ? (
+            <span
+              data-testid="mock-virtual-badge"
+              className="inline-flex items-center rounded-full bg-[var(--color-primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+              title="Resolved from a mock server route — no real network request was made."
+            >
+              ⚡ virtual / mock
+            </span>
+          ) : null}
+          {mock ? (
+            <span className="text-xs text-[var(--color-neutral-500)]">{mock.durationMs} ms</span>
+          ) : null}
           {http ? (
             <span className="text-xs text-[var(--color-neutral-500)]">{http.durationMs} ms</span>
           ) : null}
@@ -352,6 +377,19 @@ function ResultCard({
 
       {server ? null : (
       <div className="flex flex-col gap-3 px-4 py-3">
+        {/* Mock route line — served in-process by a server node, no network. */}
+        {mock ? (
+          <div className="truncate text-xs text-[var(--color-neutral-500)]" data-testid="mock-request-line">
+            <span className="font-mono font-semibold text-[var(--color-primary)]">
+              {mock.method}
+            </span>{' '}
+            <span className="font-mono">{mock.path}</span>{' '}
+            <span className="text-[var(--color-neutral-400)]">
+              → mock {mock.serverNodeName ?? 'server'} (HTTP {mock.statusCode})
+            </span>
+          </div>
+        ) : null}
+
         {/* Request line for http nodes */}
         {http?.request ? (
           <div className="truncate text-xs text-[var(--color-neutral-500)]">
