@@ -706,7 +706,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         )}
 
         {/* Canvas / Mobile list */}
-        <div className="relative flex-1 overflow-hidden">
+        <div className="relative flex-1 overflow-hidden bg-white">
           {isMobile ? (
             <MobileNodeList
               nodes={nodes}
@@ -949,7 +949,7 @@ function OutputColumn({
   return (
     <div
       data-testid="output-panel"
-      className="flex h-full w-96 shrink-0 flex-col border-l border-[var(--color-neutral-200)] bg-white"
+      className="flex h-full w-96 shrink-0 flex-col border-l border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]"
     >
       <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] px-4 py-3">
         <h2 className="truncate text-sm font-bold text-[var(--color-neutral-900)]">
