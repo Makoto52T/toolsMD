@@ -24,8 +24,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { name, description } = await request.json();
-  const project = await store.createProject(userId, name, description || '');
+  const { name, description, isTemplate } = await request.json();
+  const project = await store.createProject(userId, name, description || '', Boolean(isTemplate));
 
-  return NextResponse.json({ id: project.id, name: project.name, description: project.description }, { status: 201 });
+  return NextResponse.json(
+    {
+      id: project.id,
+      name: project.name,
+      description: project.description,
+      isTemplate: project.isTemplate,
+    },
+    { status: 201 },
+  );
 }

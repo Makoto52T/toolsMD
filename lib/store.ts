@@ -42,6 +42,10 @@ export interface Project {
   userId: string;
   name: string;
   description: string;
+  // Templates (is_template=1) are owned projects that are hidden from the normal
+  // dashboard list and surfaced in a separate "Templates" section. They can be
+  // forked into fresh projects or appended onto an existing canvas.
+  isTemplate: boolean;
   tags: Tag[];
   nodes: Node[];
   edges: Edge[];
@@ -138,6 +142,7 @@ async function loadProjectRow(r: RowDataPacket): Promise<Project> {
     userId: r.user_id,
     name: r.name,
     description: r.description ?? '',
+    isTemplate: Boolean(r.is_template),
     tags: parseTags(r.tags),
     nodes: nodeRows.map(mapNode),
     edges: edgeRows.map(mapEdge),
@@ -193,12 +198,13 @@ export const store = {
   createProject: async (
     userId: string,
     name: string,
-    description: string
+    description: string,
+    isTemplate = false
   ): Promise<Project> => {
     const id = randomUUID();
     await pool.execute(
-      'INSERT INTO projects (id, user_id, name, description) VALUES (?, ?, ?, ?)',
-      [id, userId, name, description]
+      'INSERT INTO projects (id, user_id, name, description, is_template) VALUES (?, ?, ?, ?, ?)',
+      [id, userId, name, description, isTemplate ? 1 : 0]
     );
     const project = await store.getProject(id);
     // getProject just inserted row must exist.
@@ -216,11 +222,75 @@ export const store = {
   },
 
   getUserProjects: async (userId: string): Promise<Project[]> => {
+    // Templates are deliberately excluded here so they don't clutter the normal
+    // dashboard list — they have their own getUserTemplates() query / UI section.
     const [rows] = await pool.query<RowDataPacket[]>(
-      'SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC',
+      'SELECT * FROM projects WHERE user_id = ? AND is_template = 0 ORDER BY updated_at DESC',
       [userId]
     );
     return Promise.all(rows.map(loadProjectRow));
+  },
+
+  getUserTemplates: async (userId: string): Promise<Project[]> => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM projects WHERE user_id = ? AND is_template = 1 ORDER BY updated_at DESC',
+      [userId]
+    );
+    return Promise.all(rows.map(loadProjectRow));
+  },
+
+  // Fork a template (or any project) into a brand-new project owned by userId.
+  // Copies project meta + tags + nodes + edges, remapping node ids so edges in
+  // the copy point at the new node rows. The fork is always a normal project
+  // (is_template=0) even when the source is a template.
+  forkProject: async (
+    sourceId: string,
+    userId: string,
+    name?: string
+  ): Promise<Project | null> => {
+    const source = await store.getProject(sourceId);
+    if (!source) return null;
+
+    const newProject = await store.createProject(
+      userId,
+      name || `${source.name} (copy)`,
+      source.description,
+      false
+    );
+
+    // Re-id tags so the fork is fully independent of the source.
+    const clonedTags: Tag[] = source.tags.map((t) => ({
+      id: randomUUID(),
+      key: t.key,
+      value: t.value,
+      type: t.type,
+    }));
+    if (clonedTags.length) await store.updateProjectTags(newProject.id, clonedTags);
+
+    // Copy nodes, keeping a map oldNodeId -> newNodeId so edges can be rewired.
+    const idMap = new Map<string, string>();
+    for (const n of source.nodes) {
+      const created = await store.addNode(newProject.id, {
+        type: n.type,
+        name: n.name,
+        description: n.description,
+        positionX: n.positionX,
+        positionY: n.positionY,
+        config: n.config,
+      });
+      if (created) idMap.set(n.id, created.id);
+    }
+
+    // Copy edges with remapped endpoints. Skip any edge whose endpoint failed to
+    // copy (shouldn't happen, but keeps the fork consistent).
+    for (const e of source.edges) {
+      const src = idMap.get(e.sourceNodeId);
+      const tgt = idMap.get(e.targetNodeId);
+      if (!src || !tgt) continue;
+      await store.addEdge(newProject.id, src, tgt, e.label, e.sourceHandle, e.targetHandle);
+    }
+
+    return (await store.getProject(newProject.id)) ?? null;
   },
 
   updateProject: async (

@@ -16,8 +16,20 @@ interface Project {
   description?: string;
 }
 
+interface Template {
+  id: string;
+  name: string;
+  description?: string;
+  nodeCount?: number;
+  edgeCount?: number;
+  tagCount?: number;
+}
+
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [showTemplates, setShowTemplates] = useState(true);
+  const [forkingId, setForkingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -29,12 +41,17 @@ export default function DashboardPage() {
 
   const loadProjects = useCallback(async () => {
     try {
-      const res = await fetch('/api/projects');
+      const [res, tplRes] = await Promise.all([
+        fetch('/api/projects'),
+        fetch('/api/projects/templates'),
+      ]);
       if (res.ok) {
         setProjects(await res.json());
       } else {
         router.push('/');
+        return;
       }
+      if (tplRes.ok) setTemplates(await tplRes.json());
     } catch {
       toast.error('Failed to load projects');
     } finally {
@@ -46,6 +63,24 @@ export default function DashboardPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadProjects();
   }, [loadProjects]);
+
+  const useTemplate = async (tpl: Template) => {
+    setForkingId(tpl.id);
+    try {
+      const res = await fetch(`/api/projects/${tpl.id}/fork`, { method: 'POST' });
+      if (res.ok) {
+        const created = await res.json();
+        toast.success('Project created from template');
+        router.push(`/projects/${created.id}`);
+      } else {
+        toast.error('Failed to use template');
+      }
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setForkingId(null);
+    }
+  };
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -149,6 +184,65 @@ export default function DashboardPage() {
               </Card>
             ))}
           </div>
+        )}
+
+        {/* Templates section — reusable starting points (is_template=1 projects).
+            Hidden from the projects grid above; surfaced here with fork/open. */}
+        {templates.length > 0 && (
+          <section className="mt-12">
+            <button
+              type="button"
+              onClick={() => setShowTemplates((s) => !s)}
+              className="mb-4 flex items-center gap-2 text-xl font-bold text-[var(--color-neutral-900)]"
+            >
+              <span className="text-base text-[var(--color-neutral-500)]">
+                {showTemplates ? '▼' : '▶'}
+              </span>
+              Templates
+              <span className="rounded-full bg-[var(--color-neutral-200)] px-2 py-0.5 text-xs font-medium text-[var(--color-neutral-600)]">
+                {templates.length}
+              </span>
+            </button>
+
+            {showTemplates && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {templates.map((tpl) => (
+                  <Card key={tpl.id} hoverable padding="md" className="flex flex-col">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="rounded bg-[var(--color-primary)]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">
+                        Template
+                      </span>
+                    </div>
+                    <h3 className="mb-1 text-lg font-semibold text-[var(--color-neutral-900)]">
+                      {tpl.name}
+                    </h3>
+                    <p className="mb-2 flex-1 text-sm text-[var(--color-neutral-500)]">
+                      {tpl.description || 'No description'}
+                    </p>
+                    <p className="mb-4 text-xs text-[var(--color-neutral-400)]">
+                      {tpl.nodeCount ?? 0} nodes · {tpl.edgeCount ?? 0} edges · {tpl.tagCount ?? 0} tags
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        fullWidth
+                        loading={forkingId === tpl.id}
+                        onClick={() => useTemplate(tpl)}
+                      >
+                        Use template
+                      </Button>
+                      <Link href={`/projects/${tpl.id}`}>
+                        <Button variant="secondary" size="sm">
+                          Open
+                        </Button>
+                      </Link>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </section>
         )}
       </main>
 

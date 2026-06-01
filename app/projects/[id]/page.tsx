@@ -97,6 +97,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // Desktop output column collapse (default expanded).
   const [outputCollapsed, setOutputCollapsed] = useState(false);
 
+  // Load-from-template modal: append a template's nodes/edges/tags onto this canvas.
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false);
+  const [templateList, setTemplateList] = useState<
+    { id: string; name: string; description?: string; nodeCount?: number; edgeCount?: number; tagCount?: number }[]
+  >([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [loadingTemplateId, setLoadingTemplateId] = useState<string | null>(null);
+
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -161,6 +169,113 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       } else toast.error('Failed to add node');
     } catch {
       toast.error('Network error');
+    }
+  };
+
+  // ---- Load from template (append onto current canvas) ----
+  const openTemplatePicker = async () => {
+    setShowTemplatePicker(true);
+    setTemplatesLoading(true);
+    try {
+      const res = await fetch('/api/projects/templates');
+      if (res.ok) setTemplateList(await res.json());
+      else toast.error('Failed to load templates');
+    } catch {
+      toast.error('Network error');
+    } finally {
+      setTemplatesLoading(false);
+    }
+  };
+
+  const loadFromTemplate = async (templateId: string) => {
+    setLoadingTemplateId(templateId);
+    try {
+      // Full template project (nodes + edges + tags embedded).
+      const tplRes = await fetch(`/api/projects/${templateId}`);
+      if (!tplRes.ok) {
+        toast.error('Failed to load template');
+        return;
+      }
+      const tpl = await tplRes.json();
+      const tplNodes: ApiNode[] = Array.isArray(tpl.nodes) ? tpl.nodes : [];
+      const tplEdges: ApiEdge[] = Array.isArray(tpl.edges) ? tpl.edges : [];
+      const tplTags: Tag[] = Array.isArray(tpl.tags) ? tpl.tags : [];
+
+      // 1) Merge tags by key — keep existing values, only append keys we lack so
+      //    we never clobber the user's current tag values.
+      const existingKeys = new Set(tags.map((t) => t.key));
+      const newTags = tplTags.filter((t) => !existingKeys.has(t.key));
+      if (newTags.length) {
+        const merged = [
+          ...tags,
+          ...newTags.map((t) => ({
+            id: (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`),
+            key: t.key,
+            value: t.value,
+            type: t.type,
+          })),
+        ];
+        const res = await fetch(`/api/projects/${id}/tags`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tags: merged }),
+        });
+        if (res.ok) setTags(await res.json());
+      }
+
+      // 2) Append nodes, offset so they don't overlap the existing layout, and
+      //    keep an old->new id map to rewire edges.
+      const OFFSET = 60;
+      const idMap = new Map<string, string>();
+      const createdNodes: ApiNode[] = [];
+      for (const n of tplNodes) {
+        const res = await fetch(`/api/projects/${id}/nodes`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: n.type,
+            name: n.name,
+            description: n.description ?? '',
+            positionX: (n.positionX ?? 0) + OFFSET,
+            positionY: (n.positionY ?? 0) + OFFSET,
+            config: n.config ?? {},
+          }),
+        });
+        if (res.ok) {
+          const created: ApiNode = await res.json();
+          idMap.set(n.id, created.id);
+          createdNodes.push(created);
+        }
+      }
+      if (createdNodes.length) setNodes((prev) => [...prev, ...createdNodes]);
+
+      // 3) Append edges with remapped endpoints.
+      const createdEdges: ApiEdge[] = [];
+      for (const e of tplEdges) {
+        const src = idMap.get(e.sourceNodeId);
+        const tgt = idMap.get(e.targetNodeId);
+        if (!src || !tgt) continue;
+        const res = await fetch(`/api/projects/${id}/edges`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sourceNodeId: src,
+            targetNodeId: tgt,
+            label: e.label ?? '',
+            sourceHandle: e.sourceHandle ?? null,
+            targetHandle: e.targetHandle ?? null,
+          }),
+        });
+        if (res.ok) createdEdges.push(await res.json());
+      }
+      if (createdEdges.length) setEdges((prev) => [...prev, ...createdEdges]);
+
+      toast.success(`Added ${createdNodes.length} nodes from template`);
+      setShowTemplatePicker(false);
+    } catch {
+      toast.error('Failed to load from template');
+    } finally {
+      setLoadingTemplateId(null);
     }
   };
 
@@ -681,6 +796,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           <Button size="sm" onClick={addNode} leftIcon={<span className="leading-none">+</span>}>
             Add Node
           </Button>
+          <Button size="sm" variant="secondary" onClick={openTemplatePicker}>
+            📋 Load from template
+          </Button>
           <Button
             size="sm"
             variant="success"
@@ -860,6 +978,63 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             {editingNode.type === 'server' && (
               <ServerNodeFields node={editingNode} tags={tags} onChange={setEditingNode} />
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Load-from-template picker — appends the chosen template's nodes/edges/
+          tags onto the current canvas (does not replace existing content). */}
+      <Modal
+        open={showTemplatePicker}
+        onClose={() => setShowTemplatePicker(false)}
+        title="Load from template"
+        size="lg"
+        footer={
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={() => setShowTemplatePicker(false)}>
+              Cancel
+            </Button>
+          </div>
+        }
+      >
+        {templatesLoading ? (
+          <p className="py-8 text-center text-sm text-[var(--color-neutral-500)]">
+            Loading templates…
+          </p>
+        ) : templateList.length === 0 ? (
+          <p className="py-8 text-center text-sm text-[var(--color-neutral-500)]">
+            No templates yet. Create one from the dashboard.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-[var(--color-neutral-500)]">
+              Nodes, edges and any new tags will be appended onto this canvas.
+            </p>
+            {templateList.map((tpl) => (
+              <div
+                key={tpl.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-neutral-200)] p-3"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-[var(--color-neutral-900)]">
+                    {tpl.name}
+                  </p>
+                  <p className="truncate text-xs text-[var(--color-neutral-500)]">
+                    {tpl.description || 'No description'}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-[var(--color-neutral-400)]">
+                    {tpl.nodeCount ?? 0} nodes · {tpl.edgeCount ?? 0} edges · {tpl.tagCount ?? 0} tags
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  loading={loadingTemplateId === tpl.id}
+                  onClick={() => loadFromTemplate(tpl.id)}
+                >
+                  Load
+                </Button>
+              </div>
+            ))}
           </div>
         )}
       </Modal>
