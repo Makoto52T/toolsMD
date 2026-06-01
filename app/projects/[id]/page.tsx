@@ -24,7 +24,13 @@ import { useToast } from '@/components/Toast';
 import { FlowNode, FlowNodeData } from '@/components/canvas/FlowNode';
 import { NODE_TYPES, metaFor } from '@/components/canvas/nodeMeta';
 import { TagsPanel, type Tag } from '@/components/canvas/TagsPanel';
-import { ExecutionResultPanel, type ExecResult } from '@/components/canvas/ExecutionResultPanel';
+import {
+  ExecutionResultPanel,
+  type ExecResult,
+  type MissingBinding,
+  type NodeBinding,
+  type BindRequest,
+} from '@/components/canvas/ExecutionResultPanel';
 
 interface Project {
   id: string;
@@ -65,7 +71,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [executing, setExecuting] = useState(false);
   // Result panel: null = closed. Holds an ordered list of node results plus a
   // title (single node name, or "Workflow").
-  const [execPanel, setExecPanel] = useState<{ title: string; results: ExecResult[] } | null>(null);
+  const [execPanel, setExecPanel] = useState<{
+    title: string;
+    results: ExecResult[];
+    missingBindings: MissingBinding[];
+  } | null>(null);
   // Per-node spinner state (single-node execute).
   const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
 
@@ -220,7 +230,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       const res = await fetch(`/api/projects/${id}/execute`, { method: 'POST' });
       const data = await res.json();
       const results: ExecResult[] = Array.isArray(data?.results) ? data.results : [];
-      setExecPanel({ title: 'Workflow', results });
+      const missing: MissingBinding[] = Array.isArray(data?.missingBindings)
+        ? data.missingBindings
+        : [];
+      // Adopt server-canonical tags (output bindings may have written values).
+      if (Array.isArray(data?.tags)) setTags(data.tags);
+      setExecPanel({ title: 'Workflow', results, missingBindings: missing });
       if (res.ok && results.every((r) => r.status === 'success')) toast.success('Execution finished');
       else toast.warning('Execution finished with errors');
     } catch {
@@ -228,6 +243,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       setExecPanel({
         title: 'Workflow',
         results: [{ nodeId: '', status: 'error', error: 'Network error during execution.' }],
+        missingBindings: [],
       });
     } finally {
       setExecuting(false);
@@ -244,7 +260,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         const data = await res.json();
         const result: ExecResult | undefined = data?.result;
         if (result) {
-          setExecPanel({ title: node?.name ?? 'Node', results: [result] });
+          const missing: MissingBinding[] = Array.isArray(data?.missingBindings)
+            ? data.missingBindings
+            : [];
+          if (Array.isArray(data?.tags)) setTags(data.tags);
+          setExecPanel({ title: node?.name ?? 'Node', results: [result], missingBindings: missing });
           if (result.status === 'success') toast.success('Node executed');
           else toast.warning('Node returned an error');
         } else {
@@ -255,6 +275,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         setExecPanel({
           title: node?.name ?? 'Node',
           results: [{ nodeId, status: 'error', error: 'Network error during execution.' }],
+          missingBindings: [],
         });
       } finally {
         setRunningNodeId(null);
@@ -301,6 +322,157 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     [persistTags],
   );
 
+  // ---- Output bindings (Response → Tag) ----
+  // Persist a node's full config (used when we mutate node.config.outputBindings).
+  const persistNodeConfig = useCallback(
+    async (nodeId: string, config: Record<string, unknown>) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId);
+      if (!node) return;
+      const updated = { ...node, config };
+      setNodes((prev) => prev.map((n) => (n.id === nodeId ? updated : n)));
+      try {
+        await fetch(`/api/projects/${id}/nodes/${nodeId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated),
+        });
+      } catch {
+        toast.error('Failed to save binding');
+      }
+    },
+    [id, toast],
+  );
+
+  // Bind a response field to a tag: (1) ensure the tag exists / gets the value,
+  // (2) record { path, tagId } in the node's config.outputBindings.
+  const onBind = useCallback(
+    async (req: BindRequest) => {
+      const node = nodesRef.current.find((n) => n.id === req.nodeId);
+      if (!node) return;
+
+      // Resolve target tag id (create a new tag if requested).
+      let tagId = req.tagId ?? '';
+      let tagKey = '';
+      let nextTags = tagsRef.current;
+      if (req.mode === 'new') {
+        const key = (req.newKey || '').trim();
+        if (!key) {
+          toast.warning('Tag key is required');
+          return;
+        }
+        if (nextTags.some((t) => t.key === key)) {
+          toast.error(`Tag "${key}" already exists`);
+          return;
+        }
+        tagId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        tagKey = key;
+        nextTags = [...nextTags, { id: tagId, key, value: req.value }];
+      } else {
+        const t = nextTags.find((x) => x.id === tagId);
+        if (!t) {
+          toast.error('Tag not found');
+          return;
+        }
+        tagKey = t.key;
+        // Seed the existing tag with the freshly-resolved value.
+        nextTags = nextTags.map((x) => (x.id === tagId ? { ...x, value: req.value } : x));
+      }
+
+      // Persist tags first (PUT returns canonical ids; adopt them back).
+      let savedTags = nextTags;
+      try {
+        const res = await fetch(`/api/projects/${id}/tags`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tags: nextTags }),
+        });
+        if (res.ok) {
+          savedTags = await res.json();
+          setTags(savedTags);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          toast.error(err.error || 'Failed to save tag');
+          return;
+        }
+      } catch {
+        toast.error('Network error saving tag');
+        return;
+      }
+
+      // Map our temp tag id to the server-assigned id (match by key).
+      const canonical = savedTags.find((t) => t.key === tagKey);
+      const finalTagId = canonical?.id ?? tagId;
+
+      // Update node.config.outputBindings (replace any existing binding for path).
+      const cfg = (node.config ?? {}) as Record<string, unknown>;
+      const prevBindings: NodeBinding[] = Array.isArray(cfg.outputBindings)
+        ? (cfg.outputBindings as NodeBinding[])
+        : [];
+      const nextBindings = [
+        ...prevBindings.filter((b) => b.path !== req.path),
+        { path: req.path, tagId: finalTagId, tagKey },
+      ];
+      await persistNodeConfig(req.nodeId, { ...cfg, outputBindings: nextBindings });
+      toast.success(`Bound ${req.path} → ${tagKey}`);
+    },
+    [id, persistNodeConfig, toast],
+  );
+
+  // Resolve a missing-binding alert: 'drop' removes the binding from the node;
+  // 'keep' leaves the binding and the old tag value untouched (just dismiss row).
+  const onResolveMissing = useCallback(
+    async (m: MissingBinding, action: 'drop' | 'keep') => {
+      setExecPanel((prev) =>
+        prev
+          ? {
+              ...prev,
+              missingBindings: prev.missingBindings.filter(
+                (x) => !(x.nodeId === m.nodeId && x.path === m.path && x.tagId === m.tagId),
+              ),
+            }
+          : prev,
+      );
+      if (action === 'keep') return;
+      const node = nodesRef.current.find((n) => n.id === m.nodeId);
+      if (!node) return;
+      const cfg = (node.config ?? {}) as Record<string, unknown>;
+      const prevBindings: NodeBinding[] = Array.isArray(cfg.outputBindings)
+        ? (cfg.outputBindings as NodeBinding[])
+        : [];
+      const nextBindings = prevBindings.filter(
+        (b) => !(b.path === m.path && b.tagId === m.tagId),
+      );
+      await persistNodeConfig(m.nodeId, { ...cfg, outputBindings: nextBindings });
+      toast.success('Binding removed');
+    },
+    [persistNodeConfig, toast],
+  );
+
+  // nodeId -> bindings, derived from node configs (for the result panel).
+  const bindingsByNode = useMemo(() => {
+    const map: Record<string, NodeBinding[]> = {};
+    for (const n of nodes) {
+      const b = (n.config as Record<string, unknown> | undefined)?.outputBindings;
+      if (Array.isArray(b)) map[n.id] = b as NodeBinding[];
+    }
+    return map;
+  }, [nodes]);
+
+  // tagId -> auto-write sources ("{nodeName}·{path}"), derived from all node
+  // bindings. Used by TagsPanel to show "🔗 auto" + ⚠ multi-writer badges.
+  const tagAutoInfo = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const n of nodes) {
+      const b = (n.config as Record<string, unknown> | undefined)?.outputBindings;
+      if (!Array.isArray(b)) continue;
+      for (const binding of b as NodeBinding[]) {
+        if (!binding?.tagId || !binding?.path) continue;
+        (map[binding.tagId] ??= []).push(`${n.name}·${binding.path}`);
+      }
+    }
+    return map;
+  }, [nodes]);
+
   // ---- React Flow nodes ----
   // React Flow owns measured dimensions / internal state on each node object.
   // We keep an *independent* RFNode[] state (not a useMemo derived from `nodes`)
@@ -316,6 +488,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // against current state without re-subscribing.
   const nodesRef = useRef<ApiNode[]>(nodes);
   nodesRef.current = nodes;
+
+  // Latest tags in a ref so bind handlers read current state without re-subscribing.
+  const tagsRef = useRef<Tag[]>(tags);
+  tagsRef.current = tags;
 
   // executeOne is defined above; keep it in a ref so buildData (deps: runningNodeId)
   // doesn't need to re-subscribe to it.
@@ -520,7 +696,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
 
-        <TagsPanel tags={tags} isMobile={isMobile} onChange={onTagsChange} />
+        <TagsPanel
+          tags={tags}
+          isMobile={isMobile}
+          onChange={onTagsChange}
+          autoInfo={tagAutoInfo}
+        />
       </div>
 
       {/* Edit Node modal */}
@@ -602,7 +783,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
         }
       >
-        <ExecutionResultPanel results={execPanel?.results ?? []} />
+        <ExecutionResultPanel
+          results={execPanel?.results ?? []}
+          tags={tags}
+          bindingsByNode={bindingsByNode}
+          missingBindings={execPanel?.missingBindings ?? []}
+          onBind={onBind}
+          onResolveMissing={onResolveMissing}
+        />
       </Modal>
 
       {/* Delete node confirm */}
@@ -636,6 +824,9 @@ function HttpNodeFields({
   const cfg = (node.config ?? {}) as Record<string, any>;
   const method = String(cfg.method ?? 'GET').toUpperCase();
   const url = String(cfg.url ?? '');
+  const urlMode: 'manual' | 'tag' =
+    cfg.urlMode === 'tag' || (cfg.urlMode == null && cfg.urlTagId) ? 'tag' : 'manual';
+  const urlTagId = String(cfg.urlTagId ?? '');
   const applyTagQuery = !!cfg.applyTagQuery;
   const applyTagBody = !!cfg.applyTagBody;
   const tagQuery: string[] = Array.isArray(cfg.tagQuery) ? cfg.tagQuery : [];
@@ -666,12 +857,20 @@ function HttpNodeFields({
   const byId = new Map(tags.map((t) => [t.id, t]));
 
   // ----- live preview -----
+  // Base url: manual text, or the resolved value of the selected url tag (masked).
+  const urlTag = urlMode === 'tag' ? byId.get(urlTagId) : undefined;
+  const baseForPreview =
+    urlMode === 'tag'
+      ? urlTag
+        ? urlTag.value || '(empty tag value)'
+        : '(no tag selected)'
+      : url || '(no url)';
   const previewUrl = (() => {
-    if (!url) return '(no url)';
+    if (baseForPreview.startsWith('(')) return baseForPreview;
     const selected = applyTagQuery ? tagQuery.map((id) => byId.get(id)).filter(Boolean) : [];
-    if (selected.length === 0) return url;
+    if (selected.length === 0) return baseForPreview;
     const pairs = selected.map((t) => `${t!.key}=${'•'.repeat(Math.max(3, t!.value.length || 3))}`);
-    return url + (url.includes('?') ? '&' : '?') + pairs.join('&');
+    return baseForPreview + (baseForPreview.includes('?') ? '&' : '?') + pairs.join('&');
   })();
 
   const previewBody = (() => {
@@ -706,14 +905,55 @@ function HttpNodeFields({
             </option>
           ))}
         </select>
-        <input
-          type="text"
-          placeholder="https://api.example.com/endpoint"
-          value={url}
-          data-testid="http-url"
-          onChange={(e) => setCfg({ url: e.target.value })}
-          className="rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
-        />
+        <div className="flex flex-col gap-1.5">
+          {/* URL source toggle: manual text or resolve from a tag at run time. */}
+          <div className="flex gap-3 text-xs">
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                data-testid="url-mode-manual"
+                checked={urlMode === 'manual'}
+                onChange={() => setCfg({ urlMode: 'manual' })}
+              />
+              Type URL
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                data-testid="url-mode-tag"
+                checked={urlMode === 'tag'}
+                onChange={() =>
+                  setCfg({ urlMode: 'tag', urlTagId: urlTagId || tags[0]?.id || '' })
+                }
+              />
+              From tag
+            </label>
+          </div>
+          {urlMode === 'tag' ? (
+            <select
+              value={urlTagId}
+              data-testid="url-tag-select"
+              onChange={(e) => setCfg({ urlTagId: e.target.value })}
+              className="rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+            >
+              {tags.length === 0 ? <option value="">(no tags)</option> : null}
+              {tags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.key}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              placeholder="https://api.example.com/endpoint"
+              value={url}
+              data-testid="http-url"
+              onChange={(e) => setCfg({ url: e.target.value })}
+              className="rounded-lg border border-[var(--color-neutral-300)] px-3 py-2.5 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+            />
+          )}
+        </div>
       </div>
 
       <div>

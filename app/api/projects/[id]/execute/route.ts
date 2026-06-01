@@ -15,6 +15,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  const results = await executeWorkflow(project.nodes, project.edges, project.tags);
-  return NextResponse.json({ results });
+  const { results, tags, missingBindings, tagsChanged } = await executeWorkflow(
+    project.nodes,
+    project.edges,
+    project.tags,
+  );
+
+  // Persist tags written by output bindings during the run.
+  let finalTags = tags;
+  if (tagsChanged) {
+    const updated = await store.updateProjectTags(id, tags);
+    if (updated) finalTags = updated.tags;
+  }
+
+  return NextResponse.json({ results, tags: finalTags, missingBindings });
 }

@@ -22,6 +22,18 @@ export async function POST(
     return NextResponse.json({ error: 'Node not found' }, { status: 404 });
   }
 
-  const result = await executeSingleNode(node, project.tags);
-  return NextResponse.json({ result });
+  const { result, tags, missingBindings, tagsChanged } = await executeSingleNode(
+    node,
+    project.tags,
+  );
+
+  // Persist tags written by output bindings (success/2xx only — executeSingleNode
+  // already guards that). updateProjectTags returns the server-canonical tags.
+  let finalTags = tags;
+  if (tagsChanged) {
+    const updated = await store.updateProjectTags(id, tags);
+    if (updated) finalTags = updated.tags;
+  }
+
+  return NextResponse.json({ result, tags: finalTags, missingBindings });
 }

@@ -1,4 +1,26 @@
 import { Node as PlannerNode, Edge, Tag } from './store';
+import { getByPath, valueToTagString } from './path-utils';
+
+// A single response→tag binding stored in node.config.outputBindings.
+//   path  : dot/bracket path into the node's output (e.g. "data.access_token")
+//   tagId : id of the project tag to overwrite with the resolved value
+//   tagKey: (optional) key to use if the tag doesn't exist yet (auto-create)
+export interface OutputBinding {
+  path: string;
+  tagId: string;
+  tagKey?: string;
+}
+
+// Reported back to the UI when a configured binding path no longer resolves in
+// a fresh response — the user decides whether to drop the binding or keep the
+// old value (we never silently delete or silently keep).
+export interface MissingBinding {
+  nodeId: string;
+  nodeName?: string;
+  path: string;
+  tagId: string;
+  tagKey?: string;
+}
 
 export interface HttpMeta {
   // Request that was actually sent (after tag merging) — useful for the UI.
@@ -43,6 +65,59 @@ function resolveTags(tagIds: unknown, tags: Tag[]): Tag[] {
   return out;
 }
 
+// Resolve a single tag id into its tag (or undefined). Used for url-from-tag.
+function tagById(tagId: unknown, tags: Tag[]): Tag | undefined {
+  if (typeof tagId !== 'string' || !tagId) return undefined;
+  return tags.find((t) => t.id === tagId);
+}
+
+/**
+ * Pure: apply a node's output bindings against its output, producing the next
+ * tag array (last-write-wins) plus any bindings whose path did NOT resolve.
+ *
+ * - path resolves   -> tag.value is overwritten with the coerced string. If the
+ *   referenced tag id doesn't exist yet, a new tag is created (auto-update).
+ * - path is missing  -> the binding is reported in `missing` and the existing
+ *   tag value is left untouched (decision deferred to the user).
+ *
+ * Never mutates the input `tags` array.
+ */
+export function applyOutputBindings(
+  output: unknown,
+  bindings: OutputBinding[] | undefined,
+  tags: Tag[],
+  nodeId: string,
+  nodeName?: string,
+): { tags: Tag[]; missing: MissingBinding[] } {
+  if (!Array.isArray(bindings) || bindings.length === 0) {
+    return { tags, missing: [] };
+  }
+  const next = tags.map((t) => ({ ...t }));
+  const byId = new Map(next.map((t) => [t.id, t]));
+  const missing: MissingBinding[] = [];
+
+  for (const b of bindings) {
+    if (!b || typeof b.path !== 'string' || typeof b.tagId !== 'string') continue;
+    const resolved = getByPath(output, b.path);
+    if (resolved === undefined) {
+      missing.push({ nodeId, nodeName, path: b.path, tagId: b.tagId, tagKey: b.tagKey });
+      continue;
+    }
+    const value = valueToTagString(resolved);
+    const existing = byId.get(b.tagId);
+    if (existing) {
+      existing.value = value; // last-write-wins
+    } else {
+      // Tag referenced by id but not present (e.g. bound before tag persisted)
+      // — auto-create it so the binding still takes effect.
+      const created: Tag = { id: b.tagId, key: b.tagKey || b.path, value };
+      next.push(created);
+      byId.set(created.id, created);
+    }
+  }
+  return { tags: next, missing };
+}
+
 export async function executeNode(
   node: PlannerNode,
   inputs: Record<string, any>,
@@ -70,6 +145,8 @@ export async function executeNode(
         // Make HTTP request
         const {
           url,
+          urlMode,
+          urlTagId,
           method = 'GET',
           headers = {},
           body,
@@ -79,14 +156,31 @@ export async function executeNode(
           tagBody,
         } = node.config;
 
-        if (!url) {
+        // ---- Resolve the base URL: manual (config.url) or from a tag ----
+        // urlMode === 'tag' (or a bare urlTagId) means the base url comes from
+        // the referenced tag's value at execute time.
+        let baseUrl: string | undefined;
+        if (urlMode === 'tag' || (urlMode == null && urlTagId)) {
+          const t = tagById(urlTagId, tags);
+          if (!t) {
+            return { nodeId: node.id, status: 'error', error: 'URL tag not found or not set' };
+          }
+          baseUrl = t.value;
+          if (!baseUrl) {
+            return { nodeId: node.id, status: 'error', error: 'URL tag has an empty value' };
+          }
+        } else {
+          baseUrl = url ? String(url) : undefined;
+        }
+
+        if (!baseUrl) {
           return { nodeId: node.id, status: 'error', error: 'No URL provided' };
         }
 
         const httpMethod = String(method).toUpperCase();
 
         // ---- Apply tagQuery: append resolved tags as query string params ----
-        let finalUrl = String(url);
+        let finalUrl = String(baseUrl);
         if (applyTagQuery) {
           const qTags = resolveTags(tagQuery, tags);
           if (qTags.length > 0) {
@@ -259,43 +353,96 @@ export function getExecutionOrder(nodes: PlannerNode[], edges: Edge[]): string[]
   return order;
 }
 
+export interface WorkflowRunResult {
+  results: ExecutionResult[];
+  // Final tag array after all bindings applied (last-write-wins across nodes).
+  tags: Tag[];
+  // Bindings whose path didn't resolve in this run (user decides keep/drop).
+  missingBindings: MissingBinding[];
+  // True if any binding actually changed a tag (so the caller knows to persist).
+  tagsChanged: boolean;
+}
+
 export async function executeWorkflow(
   nodes: PlannerNode[],
   edges: Edge[],
   tags: Tag[] = []
-): Promise<ExecutionResult[]> {
+): Promise<WorkflowRunResult> {
   const results: ExecutionResult[] = [];
   const outputs = new Map<string, any>();
   const order = getExecutionOrder(nodes, edges);
+
+  // Tags evolve as we go so a node later in the chain reads values written by an
+  // earlier node in the SAME run (login chain: node A writes access_token,
+  // node B uses it via tagQuery / urlTagId).
+  let currentTags = tags;
+  let tagsChanged = false;
+  const missingBindings: MissingBinding[] = [];
 
   for (const nodeId of order) {
     const node = nodes.find((n) => n.id === nodeId)!;
     const inputs = getNodeInputs(nodeId, edges, outputs);
 
-    const result = await executeNode(node, inputs, tags);
+    const result = await executeNode(node, inputs, currentTags);
     result.nodeName = node.name;
     result.nodeType = node.type;
     results.push(result);
 
     if (result.status === 'success') {
       outputs.set(nodeId, result.output);
+      // Only successful (2xx) executions write tags.
+      const applied = applyOutputBindings(
+        result.output,
+        node.config?.outputBindings,
+        currentTags,
+        node.id,
+        node.name,
+      );
+      if (applied.tags !== currentTags) {
+        currentTags = applied.tags;
+        tagsChanged = true;
+      }
+      missingBindings.push(...applied.missing);
     }
   }
 
-  return results;
+  return { results, tags: currentTags, missingBindings, tagsChanged };
+}
+
+export interface SingleRunResult {
+  result: ExecutionResult;
+  tags: Tag[];
+  missingBindings: MissingBinding[];
+  tagsChanged: boolean;
 }
 
 // Execute a single node in isolation (no upstream chain). Used by the per-node
 // "Execute" button so the user can fire one HTTP request and inspect its output
-// immediately, n8n-style.
+// immediately, n8n-style. Applies output bindings on success.
 export async function executeSingleNode(
   node: PlannerNode,
   tags: Tag[] = []
-): Promise<ExecutionResult> {
+): Promise<SingleRunResult> {
   const result = await executeNode(node, {}, tags);
   result.nodeName = node.name;
   result.nodeType = node.type;
-  return result;
+
+  if (result.status !== 'success') {
+    return { result, tags, missingBindings: [], tagsChanged: false };
+  }
+  const applied = applyOutputBindings(
+    result.output,
+    node.config?.outputBindings,
+    tags,
+    node.id,
+    node.name,
+  );
+  return {
+    result,
+    tags: applied.tags,
+    missingBindings: applied.missing,
+    tagsChanged: applied.tags !== tags,
+  };
 }
 
 function getNodeInputs(nodeId: string, edges: Edge[], outputs: Map<string, any>): Record<string, any> {

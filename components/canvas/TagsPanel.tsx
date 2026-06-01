@@ -35,10 +35,13 @@ export function TagsPanel({
   tags,
   isMobile,
   onChange,
+  autoInfo = {},
 }: {
   tags: Tag[];
   isMobile: boolean;
   onChange: (tags: Tag[]) => void;
+  // tagId -> list of "{node}·{path}" sources that auto-write this tag.
+  autoInfo?: Record<string, string[]>;
 }) {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -177,9 +180,30 @@ export function TagsPanel({
                 className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-neutral-200)] px-3 py-2"
               >
                 <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-xs font-semibold text-[var(--color-neutral-900)]">
-                    {t.key}
+                  <span className="flex items-center gap-1.5">
+                    <span className="truncate text-xs font-semibold text-[var(--color-neutral-900)]">
+                      {t.key}
+                    </span>
+                    {(() => {
+                      const sources = autoInfo[t.id];
+                      if (!sources || sources.length === 0) return null;
+                      const multi = sources.length > 1;
+                      return (
+                        <span
+                          data-testid="tag-auto-badge"
+                          title={`Auto-written by ${sources.join(', ')}`}
+                          className="shrink-0 rounded-full bg-[var(--color-success)]/15 px-1.5 py-0.5 text-[9px] font-semibold text-[var(--color-success)]"
+                        >
+                          🔗 auto{multi ? ' ⚠' : ''}
+                        </span>
+                      );
+                    })()}
                   </span>
+                  {autoInfo[t.id]?.length ? (
+                    <span className="truncate text-[9px] text-[var(--color-neutral-400)]">
+                      from {autoInfo[t.id].join(', ')}
+                    </span>
+                  ) : null}
                   <MaskedValue value={t.value} />
                 </div>
                 <div className="flex shrink-0 gap-1">

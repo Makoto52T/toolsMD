@@ -1,6 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
+import { Button } from '@/components/Button';
+import { flattenPaths, leafKey, valueToTagString } from '@/lib/path-utils';
+import type { Tag } from './TagsPanel';
 
 // Mirrors lib/node-executor.ts ExecutionResult (client-side copy).
 export interface ExecHttpMeta {
@@ -22,6 +25,32 @@ export interface ExecResult {
   output?: any;
   error?: string;
   http?: ExecHttpMeta;
+}
+
+export interface MissingBinding {
+  nodeId: string;
+  nodeName?: string;
+  path: string;
+  tagId: string;
+  tagKey?: string;
+}
+
+// A binding the panel can show as already-configured for a node.
+export interface NodeBinding {
+  path: string;
+  tagId: string;
+  tagKey?: string;
+}
+
+export interface BindRequest {
+  nodeId: string;
+  path: string;
+  // Either bind to an existing tag id, or create a new tag with this key.
+  mode: 'existing' | 'new';
+  tagId?: string;
+  newKey?: string;
+  // Resolved value at bind time (used to seed/update the tag immediately).
+  value: string;
 }
 
 function StatusBadge({ result }: { result: ExecResult }) {
@@ -53,7 +82,202 @@ function formatBody(output: any): string {
   }
 }
 
-function ResultCard({ result }: { result: ExecResult }) {
+function previewValue(v: unknown): string {
+  const s = valueToTagString(v);
+  return s.length > 60 ? s.slice(0, 60) + '…' : s || '(empty)';
+}
+
+// ---- Bind popover: pick existing tag or create a new one for one field ----
+function BindForm({
+  field,
+  tags,
+  existingBinding,
+  onSubmit,
+  onCancel,
+}: {
+  field: { path: string; value: unknown };
+  tags: Tag[];
+  existingBinding?: NodeBinding;
+  onSubmit: (req: Omit<BindRequest, 'nodeId'>) => void;
+  onCancel: () => void;
+}) {
+  const [mode, setMode] = useState<'existing' | 'new'>(
+    existingBinding ? 'existing' : tags.length > 0 ? 'existing' : 'new',
+  );
+  const [tagId, setTagId] = useState<string>(existingBinding?.tagId ?? tags[0]?.id ?? '');
+  const [newKey, setNewKey] = useState<string>(leafKey(field.path));
+  const value = valueToTagString(field.value);
+
+  return (
+    <div
+      data-testid="bind-form"
+      className="mt-2 rounded-lg border border-[var(--color-primary)]/40 bg-[var(--color-primary)]/5 p-3"
+    >
+      <p className="mb-2 text-xs font-semibold text-[var(--color-neutral-700)]">
+        Bind <code className="font-mono">{field.path}</code> → tag
+      </p>
+      <div className="mb-2 flex gap-3 text-xs">
+        <label className="flex items-center gap-1">
+          <input
+            type="radio"
+            checked={mode === 'new'}
+            onChange={() => setMode('new')}
+          />
+          New tag
+        </label>
+        <label className="flex items-center gap-1">
+          <input
+            type="radio"
+            checked={mode === 'existing'}
+            disabled={tags.length === 0}
+            onChange={() => setMode('existing')}
+          />
+          Existing tag
+        </label>
+      </div>
+
+      {mode === 'new' ? (
+        <input
+          type="text"
+          value={newKey}
+          data-testid="bind-new-key"
+          onChange={(e) => setNewKey(e.target.value)}
+          placeholder="tag key"
+          className="mb-2 w-full rounded-md border border-[var(--color-neutral-300)] px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+        />
+      ) : (
+        <select
+          value={tagId}
+          data-testid="bind-existing-tag"
+          onChange={(e) => setTagId(e.target.value)}
+          className="mb-2 w-full rounded-md border border-[var(--color-neutral-300)] px-2 py-1.5 text-xs focus:border-[var(--color-primary)] focus:outline-none"
+        >
+          {tags.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.key}
+            </option>
+          ))}
+        </select>
+      )}
+
+      <p className="mb-2 text-[11px] text-[var(--color-neutral-500)]">
+        Auto-updates on every run. Current value:{' '}
+        <span className="font-mono">{previewValue(field.value)}</span>
+      </p>
+
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          data-testid="bind-confirm"
+          className="flex-1"
+          onClick={() =>
+            onSubmit(
+              mode === 'new'
+                ? { path: field.path, mode: 'new', newKey: newKey.trim(), value }
+                : { path: field.path, mode: 'existing', tagId, value },
+            )
+          }
+        >
+          Bind
+        </Button>
+        <Button size="sm" variant="secondary" className="flex-1" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function BindableFields({
+  result,
+  tags,
+  bindings,
+  onBind,
+}: {
+  result: ExecResult;
+  tags: Tag[];
+  bindings: NodeBinding[];
+  onBind: (req: BindRequest) => void;
+}) {
+  const [openPath, setOpenPath] = useState<string | null>(null);
+  const entries = flattenPaths(result.output).filter(
+    (e) => e.type !== 'object' && e.type !== 'array',
+  );
+  if (entries.length === 0) return null;
+
+  const bindingByPath = new Map(bindings.map((b) => [b.path, b]));
+  const tagById = new Map(tags.map((t) => [t.id, t]));
+
+  return (
+    <details className="rounded-lg border border-[var(--color-neutral-200)]" open>
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-[var(--color-neutral-600)]">
+        Bindable fields ({entries.length})
+      </summary>
+      <div className="flex flex-col gap-1 border-t border-[var(--color-neutral-200)] px-3 py-2">
+        {entries.map((e) => {
+          const bound = bindingByPath.get(e.path);
+          const boundTag = bound ? tagById.get(bound.tagId) : undefined;
+          return (
+            <div key={e.path} data-testid="bindable-field">
+              <div className="flex items-center justify-between gap-2 py-0.5">
+                <div className="min-w-0">
+                  <code className="block truncate font-mono text-xs text-[var(--color-neutral-800)]">
+                    {e.path}
+                  </code>
+                  <span className="text-[10px] text-[var(--color-neutral-400)]">
+                    {previewValue(e.value)}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {bound ? (
+                    <span
+                      data-testid="field-bound"
+                      className="rounded-full bg-[var(--color-success)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-success)]"
+                    >
+                      🔗 {boundTag?.key ?? bound.tagKey ?? 'tag'}
+                    </span>
+                  ) : null}
+                  <button
+                    type="button"
+                    data-testid="bind-btn"
+                    onClick={() => setOpenPath(openPath === e.path ? null : e.path)}
+                    className="rounded p-0.5 text-xs font-medium text-[var(--color-primary)] hover:underline"
+                  >
+                    {bound ? 'rebind' : 'bind'}
+                  </button>
+                </div>
+              </div>
+              {openPath === e.path ? (
+                <BindForm
+                  field={e}
+                  tags={tags}
+                  existingBinding={bound}
+                  onSubmit={(req) => {
+                    onBind({ ...req, nodeId: result.nodeId });
+                    setOpenPath(null);
+                  }}
+                  onCancel={() => setOpenPath(null)}
+                />
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
+function ResultCard({
+  result,
+  tags,
+  bindings,
+  onBind,
+}: {
+  result: ExecResult;
+  tags: Tag[];
+  bindings: NodeBinding[];
+  onBind: (req: BindRequest) => void;
+}) {
   const http = result.http;
   const ok = result.status === 'success';
   return (
@@ -92,6 +316,16 @@ function ResultCard({ result }: { result: ExecResult }) {
           <div className="rounded-lg bg-[var(--color-danger)]/10 px-3 py-2 text-sm font-medium text-[var(--color-danger)]">
             {result.error}
           </div>
+        ) : null}
+
+        {/* Bindable fields — only meaningful for a successful response */}
+        {ok && result.output !== undefined ? (
+          <BindableFields
+            result={result}
+            tags={tags}
+            bindings={bindings}
+            onBind={onBind}
+          />
         ) : null}
 
         {/* Body */}
@@ -135,14 +369,94 @@ function ResultCard({ result }: { result: ExecResult }) {
   );
 }
 
-export function ExecutionResultPanel({ results }: { results: ExecResult[] }) {
+// Alert shown when configured bindings no longer resolve in the new response.
+// The user decides per-binding: drop it, or keep the previous tag value.
+function MissingBindingAlert({
+  missing,
+  onResolve,
+}: {
+  missing: MissingBinding[];
+  onResolve: (m: MissingBinding, action: 'drop' | 'keep') => void;
+}) {
+  if (missing.length === 0) return null;
+  return (
+    <div
+      data-testid="missing-alert"
+      className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning)]/10 px-4 py-3"
+    >
+      <p className="mb-2 text-sm font-semibold text-[var(--color-warning)]">
+        ⚠️ {missing.length} bound field{missing.length > 1 ? 's' : ''} missing in this response
+      </p>
+      <div className="flex flex-col gap-2">
+        {missing.map((m, i) => (
+          <div
+            key={`${m.nodeId}-${m.path}-${i}`}
+            data-testid="missing-row"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2 text-xs"
+          >
+            <span className="min-w-0">
+              <code className="font-mono">{m.path}</code>{' '}
+              <span className="text-[var(--color-neutral-400)]">
+                ({m.nodeName ?? m.nodeId} → {m.tagKey ?? m.tagId})
+              </span>
+            </span>
+            <span className="flex shrink-0 gap-1">
+              <button
+                type="button"
+                data-testid="missing-drop"
+                onClick={() => onResolve(m, 'drop')}
+                className="rounded px-2 py-0.5 font-medium text-[var(--color-danger)] hover:underline"
+              >
+                Remove binding
+              </button>
+              <button
+                type="button"
+                data-testid="missing-keep"
+                onClick={() => onResolve(m, 'keep')}
+                className="rounded px-2 py-0.5 font-medium text-[var(--color-neutral-600)] hover:underline"
+              >
+                Keep old value
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function ExecutionResultPanel({
+  results,
+  tags = [],
+  bindingsByNode = {},
+  missingBindings = [],
+  onBind,
+  onResolveMissing,
+}: {
+  results: ExecResult[];
+  tags?: Tag[];
+  // nodeId -> configured bindings (from node.config.outputBindings)
+  bindingsByNode?: Record<string, NodeBinding[]>;
+  missingBindings?: MissingBinding[];
+  onBind?: (req: BindRequest) => void;
+  onResolveMissing?: (m: MissingBinding, action: 'drop' | 'keep') => void;
+}) {
   if (!results.length) {
     return <p className="text-sm text-[var(--color-neutral-500)]">No result.</p>;
   }
   return (
     <div className="flex flex-col gap-3">
+      {onResolveMissing ? (
+        <MissingBindingAlert missing={missingBindings} onResolve={onResolveMissing} />
+      ) : null}
       {results.map((r, i) => (
-        <ResultCard key={`${r.nodeId}-${i}`} result={r} />
+        <ResultCard
+          key={`${r.nodeId}-${i}`}
+          result={r}
+          tags={tags}
+          bindings={bindingsByNode[r.nodeId] ?? []}
+          onBind={onBind ?? (() => {})}
+        />
       ))}
     </div>
   );
