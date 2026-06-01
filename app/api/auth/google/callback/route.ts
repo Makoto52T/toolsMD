@@ -68,9 +68,9 @@ export async function GET(request: NextRequest) {
     const name = (profile.name as string | undefined) || email.split('@')[0];
 
     // 3. Create or fetch the user in the store
-    let user = store.getUserByEmail(email);
+    let user = await store.getUserByEmail(email);
     if (!user) {
-      user = store.createUser(email, name);
+      user = await store.createUser(email, name);
     }
 
     // 4. Set session cookie (userId) and redirect to dashboard.

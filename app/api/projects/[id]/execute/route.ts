@@ -10,7 +10,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const project = store.getProject(id);
+  const project = await store.getProject(id);
   if (!project || project.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }

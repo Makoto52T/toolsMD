@@ -6,7 +6,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const userId = request.cookies.get('userId')?.value;
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const project = store.getProject(id);
+  const project = await store.getProject(id);
   if (!project || project.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
@@ -20,7 +20,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const { name, description } = await request.json();
-  const project = store.updateProject(id, name, description);
+  const project = await store.updateProject(id, name, description);
   if (!project || project.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
@@ -33,11 +33,11 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   const userId = request.cookies.get('userId')?.value;
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const project = store.getProject(id);
+  const project = await store.getProject(id);
   if (!project || project.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  store.deleteProject(id);
+  await store.deleteProject(id);
   return NextResponse.json({ success: true });
 }

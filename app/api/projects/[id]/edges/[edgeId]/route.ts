@@ -6,11 +6,11 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   const userId = request.cookies.get('userId')?.value;
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const project = store.getProject(id);
+  const project = await store.getProject(id);
   if (!project || project.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  store.deleteEdge(id, edgeId);
+  await store.deleteEdge(id, edgeId);
   return NextResponse.json({ success: true });
 }

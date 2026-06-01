@@ -8,9 +8,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Email required' }, { status: 400 });
   }
 
-  let user = store.getUserByEmail(email);
+  let user = await store.getUserByEmail(email);
   if (!user) {
-    user = store.createUser(email, name || email.split('@')[0]);
+    user = await store.createUser(email, name || email.split('@')[0]);
   }
 
   const response = NextResponse.json({ user });
@@ -24,6 +24,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ user: null });
   }
 
-  const user = store.getUser(userId);
+  const user = await store.getUser(userId);
   return NextResponse.json({ user });
 }

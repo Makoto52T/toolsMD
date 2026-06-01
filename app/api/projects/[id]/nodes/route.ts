@@ -6,7 +6,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const userId = request.cookies.get('userId')?.value;
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const project = store.getProject(id);
+  const project = await store.getProject(id);
   if (!project || project.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
@@ -19,13 +19,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const userId = request.cookies.get('userId')?.value;
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const project = store.getProject(id);
+  const project = await store.getProject(id);
   if (!project || project.userId !== userId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
   const { type, name, description, positionX, positionY, config } = await request.json();
-  const node = store.addNode(id, { type, name, description, positionX, positionY, config });
+  const node = await store.addNode(id, { type, name, description, positionX, positionY, config });
 
   return NextResponse.json(node, { status: 201 });
 }

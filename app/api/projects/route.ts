@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const projects = store.getUserProjects(userId).map(p => ({
+  const projects = (await store.getUserProjects(userId)).map(p => ({
     id: p.id,
     name: p.name,
     description: p.description,
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { name, description } = await request.json();
-  const project = store.createProject(userId, name, description || '');
+  const project = await store.createProject(userId, name, description || '');
 
   return NextResponse.json({ id: project.id, name: project.name, description: project.description }, { status: 201 });
 }

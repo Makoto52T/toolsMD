@@ -1,4 +1,9 @@
-// Simple in-memory store for MVP
+// Persistent store backed by VPS MySQL (mysql2 pool in ./db).
+// API surface mirrors the previous in-memory store, but every method is async.
+import { randomUUID } from 'crypto';
+import type { RowDataPacket } from 'mysql2';
+import pool from './db';
+
 export interface Node {
   id: string;
   type: 'function' | 'http-request' | 'puppeteer' | 'sub-project';
@@ -33,113 +38,277 @@ export interface User {
   name: string;
 }
 
-// Mock data store
-const users = new Map<string, User>();
-const projects = new Map<string, Project>();
+// --- row mappers -----------------------------------------------------------
+
+function parseConfig(raw: unknown): Record<string, any> {
+  if (raw == null) return {};
+  // mysql2 returns JSON columns already parsed as objects, but be defensive.
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  if (typeof raw === 'object') return raw as Record<string, any>;
+  return {};
+}
+
+function mapNode(r: RowDataPacket): Node {
+  return {
+    id: r.id,
+    type: r.type,
+    name: r.name,
+    description: r.description ?? '',
+    positionX: Number(r.position_x),
+    positionY: Number(r.position_y),
+    config: parseConfig(r.config),
+  };
+}
+
+function mapEdge(r: RowDataPacket): Edge {
+  return {
+    id: r.id,
+    sourceNodeId: r.source_node_id,
+    targetNodeId: r.target_node_id,
+    label: r.label ?? '',
+  };
+}
+
+async function loadProjectRow(r: RowDataPacket): Promise<Project> {
+  const [nodeRows] = await pool.query<RowDataPacket[]>(
+    'SELECT * FROM nodes WHERE project_id = ? ORDER BY created_at ASC, id ASC',
+    [r.id]
+  );
+  const [edgeRows] = await pool.query<RowDataPacket[]>(
+    'SELECT * FROM edges WHERE project_id = ? ORDER BY created_at ASC, id ASC',
+    [r.id]
+  );
+  return {
+    id: r.id,
+    userId: r.user_id,
+    name: r.name,
+    description: r.description ?? '',
+    nodes: nodeRows.map(mapNode),
+    edges: edgeRows.map(mapEdge),
+    createdAt: new Date(r.created_at),
+    updatedAt: new Date(r.updated_at),
+  };
+}
+
+// --- store -----------------------------------------------------------------
 
 export const store = {
   // User operations
-  createUser: (email: string, name: string): User => {
-    const id = `user_${Date.now()}`;
-    const user = { id, email, name };
-    users.set(id, user);
-    return user;
+  createUser: async (email: string, name: string): Promise<User> => {
+    const id = randomUUID();
+    await pool.execute('INSERT INTO users (id, email, name) VALUES (?, ?, ?)', [
+      id,
+      email,
+      name,
+    ]);
+    return { id, email, name };
   },
 
-  getUserByEmail: (email: string): User | undefined => {
-    return Array.from(users.values()).find(u => u.email === email);
+  getUserByEmail: async (email: string): Promise<User | undefined> => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT id, email, name FROM users WHERE email = ? LIMIT 1',
+      [email]
+    );
+    const r = rows[0];
+    return r ? { id: r.id, email: r.email, name: r.name } : undefined;
   },
 
-  getUser: (id: string): User | undefined => {
-    return users.get(id);
+  getUser: async (id: string): Promise<User | undefined> => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT id, email, name FROM users WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const r = rows[0];
+    return r ? { id: r.id, email: r.email, name: r.name } : undefined;
   },
 
   // Project operations
-  createProject: (userId: string, name: string, description: string): Project => {
-    const id = `proj_${Date.now()}`;
-    const project: Project = {
-      id,
-      userId,
-      name,
-      description,
-      nodes: [],
-      edges: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    projects.set(id, project);
-    return project;
+  createProject: async (
+    userId: string,
+    name: string,
+    description: string
+  ): Promise<Project> => {
+    const id = randomUUID();
+    await pool.execute(
+      'INSERT INTO projects (id, user_id, name, description) VALUES (?, ?, ?, ?)',
+      [id, userId, name, description]
+    );
+    const project = await store.getProject(id);
+    // getProject just inserted row must exist.
+    return project as Project;
   },
 
-  getProject: (id: string): Project | undefined => {
-    return projects.get(id);
+  getProject: async (id: string): Promise<Project | undefined> => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM projects WHERE id = ? LIMIT 1',
+      [id]
+    );
+    const r = rows[0];
+    if (!r) return undefined;
+    return loadProjectRow(r);
   },
 
-  getUserProjects: (userId: string): Project[] => {
-    return Array.from(projects.values()).filter(p => p.userId === userId);
+  getUserProjects: async (userId: string): Promise<Project[]> => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC',
+      [userId]
+    );
+    return Promise.all(rows.map(loadProjectRow));
   },
 
-  updateProject: (id: string, name: string, description: string): Project | null => {
-    const project = projects.get(id);
-    if (!project) return null;
-    project.name = name;
-    project.description = description;
-    project.updatedAt = new Date();
-    return project;
+  updateProject: async (
+    id: string,
+    name: string,
+    description: string
+  ): Promise<Project | null> => {
+    const [res] = await pool.execute<any>(
+      'UPDATE projects SET name = ?, description = ? WHERE id = ?',
+      [name, description, id]
+    );
+    if (res.affectedRows === 0) return null;
+    const project = await store.getProject(id);
+    return project ?? null;
   },
 
-  deleteProject: (id: string): boolean => {
-    return projects.delete(id);
+  deleteProject: async (id: string): Promise<boolean> => {
+    const [res] = await pool.execute<any>('DELETE FROM projects WHERE id = ?', [id]);
+    return res.affectedRows > 0;
   },
 
   // Node operations
-  addNode: (projectId: string, node: Omit<Node, 'id'>): Node | null => {
-    const project = projects.get(projectId);
-    if (!project) return null;
-    const newNode: Node = { ...node, id: `node_${Date.now()}` };
-    project.nodes.push(newNode);
-    project.updatedAt = new Date();
-    return newNode;
+  addNode: async (
+    projectId: string,
+    node: Omit<Node, 'id'>
+  ): Promise<Node | null> => {
+    const [proj] = await pool.query<RowDataPacket[]>(
+      'SELECT id FROM projects WHERE id = ? LIMIT 1',
+      [projectId]
+    );
+    if (!proj[0]) return null;
+
+    const id = randomUUID();
+    await pool.execute(
+      `INSERT INTO nodes (id, project_id, type, name, description, position_x, position_y, config)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        projectId,
+        node.type,
+        node.name,
+        node.description ?? '',
+        node.positionX ?? 0,
+        node.positionY ?? 0,
+        JSON.stringify(node.config ?? {}),
+      ]
+    );
+    await touchProject(projectId);
+    return {
+      id,
+      type: node.type,
+      name: node.name,
+      description: node.description ?? '',
+      positionX: node.positionX ?? 0,
+      positionY: node.positionY ?? 0,
+      config: node.config ?? {},
+    };
   },
 
-  updateNode: (projectId: string, nodeId: string, updates: Partial<Node>): Node | null => {
-    const project = projects.get(projectId);
-    if (!project) return null;
-    const node = project.nodes.find(n => n.id === nodeId);
-    if (!node) return null;
-    Object.assign(node, updates);
-    project.updatedAt = new Date();
-    return node;
+  updateNode: async (
+    projectId: string,
+    nodeId: string,
+    updates: Partial<Node>
+  ): Promise<Node | null> => {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      'SELECT * FROM nodes WHERE id = ? AND project_id = ? LIMIT 1',
+      [nodeId, projectId]
+    );
+    const current = rows[0];
+    if (!current) return null;
+
+    const merged: Node = { ...mapNode(current), ...stripUndefined(updates) };
+    await pool.execute(
+      `UPDATE nodes SET type = ?, name = ?, description = ?, position_x = ?, position_y = ?, config = ?
+       WHERE id = ? AND project_id = ?`,
+      [
+        merged.type,
+        merged.name,
+        merged.description ?? '',
+        merged.positionX ?? 0,
+        merged.positionY ?? 0,
+        JSON.stringify(merged.config ?? {}),
+        nodeId,
+        projectId,
+      ]
+    );
+    await touchProject(projectId);
+    return merged;
   },
 
-  deleteNode: (projectId: string, nodeId: string): boolean => {
-    const project = projects.get(projectId);
-    if (!project) return false;
-    const index = project.nodes.findIndex(n => n.id === nodeId);
-    if (index === -1) return false;
-    project.nodes.splice(index, 1);
-    project.edges = project.edges.filter(e => e.sourceNodeId !== nodeId && e.targetNodeId !== nodeId);
-    project.updatedAt = new Date();
-    return true;
+  deleteNode: async (projectId: string, nodeId: string): Promise<boolean> => {
+    // Edges referencing this node are not FK-bound (they point at node ids in
+    // app logic), so clean them up explicitly to mirror old behaviour.
+    await pool.execute(
+      'DELETE FROM edges WHERE project_id = ? AND (source_node_id = ? OR target_node_id = ?)',
+      [projectId, nodeId, nodeId]
+    );
+    const [res] = await pool.execute<any>(
+      'DELETE FROM nodes WHERE id = ? AND project_id = ?',
+      [nodeId, projectId]
+    );
+    if (res.affectedRows > 0) await touchProject(projectId);
+    return res.affectedRows > 0;
   },
 
   // Edge operations
-  addEdge: (projectId: string, sourceNodeId: string, targetNodeId: string, label: string): Edge | null => {
-    const project = projects.get(projectId);
-    if (!project) return null;
-    const edge: Edge = { id: `edge_${Date.now()}`, sourceNodeId, targetNodeId, label };
-    project.edges.push(edge);
-    project.updatedAt = new Date();
-    return edge;
+  addEdge: async (
+    projectId: string,
+    sourceNodeId: string,
+    targetNodeId: string,
+    label: string
+  ): Promise<Edge | null> => {
+    const [proj] = await pool.query<RowDataPacket[]>(
+      'SELECT id FROM projects WHERE id = ? LIMIT 1',
+      [projectId]
+    );
+    if (!proj[0]) return null;
+
+    const id = randomUUID();
+    await pool.execute(
+      `INSERT INTO edges (id, project_id, source_node_id, target_node_id, label)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, projectId, sourceNodeId, targetNodeId, label ?? '']
+    );
+    await touchProject(projectId);
+    return { id, sourceNodeId, targetNodeId, label: label ?? '' };
   },
 
-  deleteEdge: (projectId: string, edgeId: string): boolean => {
-    const project = projects.get(projectId);
-    if (!project) return false;
-    const index = project.edges.findIndex(e => e.id === edgeId);
-    if (index === -1) return false;
-    project.edges.splice(index, 1);
-    project.updatedAt = new Date();
-    return true;
+  deleteEdge: async (projectId: string, edgeId: string): Promise<boolean> => {
+    const [res] = await pool.execute<any>(
+      'DELETE FROM edges WHERE id = ? AND project_id = ?',
+      [edgeId, projectId]
+    );
+    if (res.affectedRows > 0) await touchProject(projectId);
+    return res.affectedRows > 0;
   },
 };
+
+async function touchProject(projectId: string): Promise<void> {
+  await pool.execute(
+    'UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+    [projectId]
+  );
+}
+
+function stripUndefined<T extends object>(obj: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) (out as any)[k] = v;
+  }
+  return out;
+}
