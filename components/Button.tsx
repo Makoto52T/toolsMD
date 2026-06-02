@@ -16,11 +16,11 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantClasses: Record<Variant, string> = {
   primary:
-    'bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] focus-visible:ring-[var(--color-primary)] shadow-sm',
+    'bg-[var(--color-primary)] text-white hover:bg-[var(--color-primary-dark)] focus-visible:ring-[var(--color-primary)] shadow-[var(--shadow-accent)]',
   secondary:
-    'bg-[var(--color-neutral-100)] text-[var(--color-neutral-800)] hover:bg-[var(--color-neutral-200)] focus-visible:ring-[var(--color-neutral-400)] border border-[var(--color-neutral-200)]',
+    'bg-white text-[var(--color-neutral-800)] hover:bg-[var(--color-neutral-100)] hover:border-[var(--color-neutral-300)] focus-visible:ring-[var(--color-neutral-400)] border border-[var(--color-neutral-200)] shadow-[var(--shadow-card)]',
   ghost:
-    'bg-transparent text-[var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)] focus-visible:ring-[var(--color-neutral-300)]',
+    'bg-transparent text-[var(--color-neutral-600)] hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)] focus-visible:ring-[var(--color-neutral-300)]',
   danger:
     'bg-[var(--color-danger)] text-white hover:bg-[var(--color-danger-dark)] focus-visible:ring-[var(--color-danger)] shadow-sm',
   success:
@@ -28,7 +28,7 @@ const variantClasses: Record<Variant, string> = {
 };
 
 const sizeClasses: Record<Size, string> = {
-  sm: 'px-3 py-1.5 text-sm gap-1.5',
+  sm: 'px-3 py-1.5 text-[0.8125rem] gap-1.5',
   md: 'px-4 py-2.5 text-sm gap-2',
   lg: 'px-5 py-3 text-base gap-2',
 };
@@ -48,10 +48,10 @@ export function Button({
     <button
       disabled={disabled || loading}
       className={[
-        'inline-flex items-center justify-center rounded-lg font-semibold',
-        'transition-all duration-150 ease-out',
+        'inline-flex items-center justify-center rounded-lg font-semibold tracking-[-0.005em]',
+        'transition-all duration-150 [transition-timing-function:var(--ease-out-quart)]',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-        'disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]',
+        'disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.97]',
         variantClasses[variant],
         sizeClasses[size],
         fullWidth ? 'w-full' : '',

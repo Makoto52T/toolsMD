@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/Button';
-import { Card } from '@/components/Card';
+import { BrandMark } from '@/components/BrandMark';
 import { useToast } from '@/components/Toast';
 
 export default function LoginPage() {
@@ -58,18 +58,28 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[var(--color-primary)] to-[var(--color-primary-dark)] p-4">
-      <Card padding="lg" className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-primary)] text-2xl">
-            🗂️
+    <div className="bg-instrument relative flex min-h-screen flex-col items-center justify-center overflow-hidden p-4">
+      {/* Ambient accent glow — the "signal" lighting up the instrument */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-40 left-1/2 h-[28rem] w-[28rem] -translate-x-1/2 rounded-full opacity-40 blur-[120px]"
+        style={{ background: 'radial-gradient(circle, #ff5a36 0%, transparent 70%)' }}
+      />
+
+      <div className="relative z-10 w-full max-w-[26rem]">
+        <div className="mb-7 flex flex-col items-center text-center">
+          <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-[var(--color-ink-border)] bg-[var(--color-ink-surface)] shadow-[0_8px_24px_-8px_rgb(207_58_30/0.5)]">
+            <BrandMark size={30} tone="dark" />
           </div>
-          <h1 className="text-3xl font-bold text-[var(--color-neutral-900)]">ProjectPlanner</h1>
-          <p className="mt-2 text-sm text-[var(--color-neutral-500)]">
-            Visual workflow planning with canvas editor
+          <h1 className="text-[1.75rem] font-bold tracking-tight text-[var(--color-ink-text)]">
+            tools<span className="text-[var(--color-primary-light)]">MD</span>
+          </h1>
+          <p className="mt-2 max-w-xs text-sm leading-relaxed text-[var(--color-ink-muted)]">
+            Design system architecture on a canvas. Wire nodes into runnable chains.
           </p>
         </div>
 
+        <div className="rounded-[1rem] border border-[var(--color-ink-border)] bg-[var(--color-ink-surface)] p-6 shadow-[0_24px_60px_-20px_rgb(0_0_0/0.6)]">
         <Button
           variant="secondary"
           fullWidth
@@ -99,32 +109,35 @@ export default function LoginPage() {
           Sign in with Google
         </Button>
 
-        <div className="relative my-6">
+        <div className="relative my-5">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-[var(--color-neutral-200)]" />
+            <div className="w-full border-t border-[var(--color-ink-border)]" />
           </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="bg-white px-3 text-[var(--color-neutral-400)]">or try demo</span>
+          <div className="relative flex justify-center">
+            <span className="bg-[var(--color-ink-surface)] px-3 font-mono text-[0.7rem] uppercase tracking-[0.18em] text-[var(--color-ink-muted)]">
+              or try demo
+            </span>
           </div>
         </div>
 
-        <form onSubmit={handleDemoLogin} className="flex flex-col gap-4">
+        <form onSubmit={handleDemoLogin} className="flex flex-col gap-3">
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="demo@example.com"
-            className="w-full rounded-lg border border-[var(--color-neutral-300)] px-4 py-3 text-base transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+            placeholder="you@example.com"
+            className="w-full rounded-lg border border-[var(--color-ink-border)] bg-[var(--color-ink-raised)] px-4 py-3 text-base text-[var(--color-ink-text)] placeholder:text-[var(--color-ink-muted)] transition-colors focus:border-[var(--color-primary-light)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary-light)]/30"
           />
           <Button type="submit" variant="primary" size="lg" loading={loading} fullWidth>
-            {loading ? 'Signing in...' : 'Demo Login'}
+            {loading ? 'Signing in…' : 'Enter demo workspace'}
           </Button>
         </form>
+        </div>
 
-        <p className="mt-6 text-center text-xs text-[var(--color-neutral-400)]">
-          Demo mode: use any email to test. Configure Google OAuth in .env.local for production.
+        <p className="mt-5 text-center font-mono text-[0.7rem] leading-relaxed text-[var(--color-ink-muted)]/80">
+          Demo mode accepts any email. Set Google OAuth in .env.local for production.
         </p>
-      </Card>
+      </div>
     </div>
   );
 }

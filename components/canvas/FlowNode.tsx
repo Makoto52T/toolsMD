@@ -53,10 +53,15 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   return (
     <div
       className={[
-        'w-[180px] rounded-xl border-2 bg-white shadow-md transition-shadow',
-        selected ? 'shadow-xl' : 'hover:shadow-lg',
+        'w-[186px] overflow-hidden rounded-xl border bg-white transition-all duration-150',
+        selected
+          ? 'shadow-[0_8px_24px_-6px_rgb(17_20_24/0.22)]'
+          : 'shadow-[0_1px_2px_0_rgb(17_20_24/0.06),0_4px_10px_-4px_rgb(17_20_24/0.10)] hover:shadow-[0_6px_18px_-6px_rgb(17_20_24/0.18)]',
       ].join(' ')}
-      style={{ borderColor: selected ? meta.color : '#cbd5e1' }}
+      style={{
+        borderColor: selected ? meta.color : '#dcdde0',
+        borderWidth: selected ? 2 : 1,
+      }}
     >
       <Handle
         id="top"
@@ -74,15 +79,23 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
       />
 
       <div
-        className="flex items-center gap-2 rounded-t-[10px] px-3 py-2"
-        style={{ background: `${meta.color}15` }}
+        className="flex items-center gap-2 px-3 py-2"
+        style={{ background: `${meta.color}14`, borderBottom: `1px solid ${meta.color}26` }}
       >
-        <span className="text-lg leading-none">{meta.icon}</span>
+        <span
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sm leading-none"
+          style={{ background: `${meta.color}24` }}
+        >
+          {meta.icon}
+        </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-[var(--color-neutral-900)]">
+          <div className="truncate text-sm font-semibold leading-tight text-[var(--color-neutral-900)]">
             {data.name}
           </div>
-          <div className="text-[10px] uppercase tracking-wide text-[var(--color-neutral-400)]">
+          <div
+            className="font-mono text-[9px] font-semibold uppercase tracking-[0.12em]"
+            style={{ color: meta.color }}
+          >
             {meta.label}
           </div>
         </div>
@@ -162,7 +175,7 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
         </div>
       ) : null}
 
-      <div className="flex gap-1 px-2 py-2">
+      <div className="flex gap-1 px-2 pb-2 pt-2">
         {looping ? (
           <button
             onClick={(e) => {
@@ -171,7 +184,7 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             }}
             title="Stop the loop"
             data-testid="loop-stop-btn"
-            className="nodrag flex-1 rounded-md bg-[var(--color-danger)] py-1 text-xs font-medium text-white transition-colors hover:opacity-90"
+            className="nodrag flex-1 rounded-md bg-[var(--color-danger)] py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
           >
             ⏹ Stop
           </button>
@@ -183,7 +196,7 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             }}
             disabled={data.executing}
             title={isServer ? 'Health-check this server' : 'Execute this node'}
-            className="nodrag flex-1 rounded-md py-1 text-xs font-medium text-white transition-colors disabled:opacity-60"
+            className="nodrag flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
             style={{ background: meta.color }}
           >
             {data.executing ? '…' : runLabel}
@@ -194,7 +207,7 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             e.stopPropagation();
             data.onEdit(id);
           }}
-          className="nodrag flex-1 rounded-md bg-[var(--color-neutral-100)] py-1 text-xs font-medium text-[var(--color-neutral-700)] transition-colors hover:bg-[var(--color-neutral-200)]"
+          className="nodrag rounded-md bg-[var(--color-neutral-100)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-neutral-700)] transition-colors hover:bg-[var(--color-neutral-200)]"
         >
           Edit
         </button>
@@ -203,9 +216,12 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             e.stopPropagation();
             data.onDelete(id);
           }}
-          className="nodrag flex-1 rounded-md bg-[var(--color-danger)]/10 py-1 text-xs font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/20"
+          aria-label="Delete node"
+          className="nodrag rounded-md bg-[var(--color-danger)]/10 px-2 py-1.5 text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/20"
         >
-          Delete
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 001 1h8a1 1 0 001-1V6" />
+          </svg>
         </button>
       </div>
 

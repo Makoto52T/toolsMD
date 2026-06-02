@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import { ToastProvider } from '@/components/Toast';
 
@@ -9,14 +9,20 @@ const inter = Inter({
   display: 'swap',
 });
 
+const mono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono-stack',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
-  title: 'ProjectPlanner',
-  description: 'Visual project planning with n8n-style canvas',
+  title: 'toolsMD — system architecture designer',
+  description: 'Design system architecture on a canvas: nodes, functions, HTTP and Puppeteer steps wired into runnable chains.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={`${inter.variable} ${mono.variable}`}>
       <body className="antialiased">
         <ToastProvider>{children}</ToastProvider>
       </body>

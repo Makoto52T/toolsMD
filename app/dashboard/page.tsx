@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/Button';
-import { Card } from '@/components/Card';
+import { Wordmark, BrandMark } from '@/components/BrandMark';
 import { Modal } from '@/components/Modal';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FullPageSpinner } from '@/components/LoadingSpinner';
@@ -134,69 +134,105 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[var(--color-neutral-50)]">
-      <header className="border-b border-[var(--color-neutral-200)] bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <h1 className="flex items-center gap-2 text-2xl font-bold text-[var(--color-primary)]">
-            <span>🗂️</span> ProjectPlanner
-          </h1>
-          <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-[var(--z-sticky)] border-b border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
+          <Link href="/dashboard" aria-label="toolsMD home">
+            <Wordmark />
+          </Link>
+          <nav className="flex items-center gap-1">
             <Link
               href="/wiki-ingest"
-              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-primary)]"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
             >
-              📥 Wiki Ingest
+              Wiki Ingest
             </Link>
             <Link
               href="/docs"
-              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-primary)]"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
             >
-              📘 Docs
+              Docs
             </Link>
-            <Button variant="ghost" onClick={() => router.push('/')}>
-              Sign Out
+            <div className="mx-1 h-5 w-px bg-[var(--color-neutral-200)]" />
+            <Button variant="ghost" size="sm" onClick={() => router.push('/')}>
+              Sign out
             </Button>
-          </div>
+          </nav>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-[var(--color-neutral-900)]">My Projects</h2>
-          <Button onClick={() => setShowCreate(true)} leftIcon={<span className="text-lg leading-none">+</span>}>
-            New Project
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-[1.9375rem] font-bold tracking-tight text-[var(--color-neutral-900)]">
+              Projects
+            </h1>
+            <p className="mt-1 text-sm text-[var(--color-neutral-500)]">
+              {projects.length > 0
+                ? `${projects.length} architecture${projects.length === 1 ? '' : 's'} on your canvas`
+                : 'Each project is a canvas of nodes wired into runnable chains'}
+            </p>
+          </div>
+          <Button onClick={() => setShowCreate(true)} leftIcon={<span className="text-base leading-none">+</span>}>
+            New project
           </Button>
         </div>
 
         {projects.length === 0 ? (
-          <Card padding="lg" className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="mb-4 text-5xl">📭</div>
-            <h3 className="mb-1 text-lg font-semibold text-[var(--color-neutral-800)]">No projects yet</h3>
-            <p className="mb-6 text-sm text-[var(--color-neutral-500)]">
-              Create your first project to start building workflows.
-            </p>
-            <Button onClick={() => setShowCreate(true)}>Create your first project</Button>
-          </Card>
+          <div className="overflow-hidden rounded-[var(--radius-card)] border border-dashed border-[var(--color-neutral-300)] bg-white">
+            <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]">
+                <BrandMark size={34} tone="light" />
+              </div>
+              <h2 className="text-lg font-semibold text-[var(--color-neutral-900)]">
+                Start your first architecture
+              </h2>
+              <p className="mt-1.5 mb-6 max-w-sm text-sm leading-relaxed text-[var(--color-neutral-500)]">
+                Drop nodes on the canvas, give each one a function, HTTP call, or Puppeteer step,
+                then connect them into a chain you can run.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Button onClick={() => setShowCreate(true)}>Create a blank project</Button>
+                {templates.length > 0 && (
+                  <Button variant="secondary" onClick={() => setShowTemplates(true)}>
+                    Browse templates
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((project) => (
-              <Card key={project.id} hoverable padding="md" className="flex flex-col">
-                <h3 className="mb-1 text-lg font-semibold text-[var(--color-neutral-900)]">
-                  {project.name}
-                </h3>
-                <p className="mb-4 flex-1 text-sm text-[var(--color-neutral-500)]">
-                  {project.description || 'No description'}
-                </p>
-                <div className="flex gap-2">
+              <div
+                key={project.id}
+                className="group relative flex flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-neutral-200)] bg-white shadow-[var(--shadow-card)] transition-all duration-200 [transition-timing-function:var(--ease-out-quart)] hover:-translate-y-0.5 hover:border-[var(--color-neutral-300)] hover:shadow-[var(--shadow-card-hover)]"
+              >
+                <span className="absolute inset-x-0 top-0 h-0.5 origin-left scale-x-0 bg-[var(--color-primary)] transition-transform duration-300 [transition-timing-function:var(--ease-out-quart)] group-hover:scale-x-100" />
+                <Link href={`/projects/${project.id}`} className="flex flex-1 flex-col p-5">
+                  <h3 className="text-[1.0625rem] font-semibold leading-snug text-[var(--color-neutral-900)]">
+                    {project.name}
+                  </h3>
+                  <p className="mt-1.5 flex-1 text-sm leading-relaxed text-[var(--color-neutral-500)] line-clamp-3">
+                    {project.description || 'No description yet'}
+                  </p>
+                </Link>
+                <div className="flex items-center gap-2 border-t border-[var(--color-neutral-100)] px-5 py-3">
                   <Link href={`/projects/${project.id}`} className="flex-1">
                     <Button variant="primary" size="sm" fullWidth>
-                      Open
+                      Open canvas
                     </Button>
                   </Link>
-                  <Button variant="danger" size="sm" onClick={() => setDeleteTarget(project)}>
-                    Delete
-                  </Button>
+                  <button
+                    onClick={() => setDeleteTarget(project)}
+                    aria-label={`Delete ${project.name}`}
+                    className="rounded-lg p-2 text-[var(--color-neutral-400)] transition-colors hover:bg-[var(--color-danger)]/10 hover:text-[var(--color-danger)]"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <path d="M3 6h18M8 6V4h8v2m-9 0v14a1 1 0 001 1h8a1 1 0 001-1V6" />
+                    </svg>
+                  </button>
                 </div>
-              </Card>
+              </div>
             ))}
           </div>
         )}
@@ -204,45 +240,63 @@ export default function DashboardPage() {
         {/* Templates section — reusable starting points (is_template=1 projects).
             Hidden from the projects grid above; surfaced here with fork/open. */}
         {templates.length > 0 && (
-          <section className="mt-12">
+          <section className="mt-14">
             <button
               type="button"
               onClick={() => setShowTemplates((s) => !s)}
-              className="mb-4 flex items-center gap-2 text-xl font-bold text-[var(--color-neutral-900)]"
+              className="group mb-5 flex w-full items-center gap-3 border-t border-[var(--color-neutral-200)] pt-6 text-left"
             >
-              <span className="text-base text-[var(--color-neutral-500)]">
-                {showTemplates ? '▼' : '▶'}
-              </span>
-              Templates
-              <span className="rounded-full bg-[var(--color-neutral-200)] px-2 py-0.5 text-xs font-medium text-[var(--color-neutral-600)]">
+              <svg
+                width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                className={`text-[var(--color-neutral-400)] transition-transform duration-200 ${showTemplates ? 'rotate-90' : ''}`}
+              >
+                <path d="M9 6l6 6-6 6" />
+              </svg>
+              <h2 className="text-xl font-bold tracking-tight text-[var(--color-neutral-900)]">
+                Templates
+              </h2>
+              <span className="rounded-full border border-[var(--color-neutral-200)] bg-white px-2 py-0.5 font-mono text-xs font-medium text-[var(--color-neutral-600)]">
                 {templates.length}
+              </span>
+              <span className="ml-auto text-sm font-medium text-[var(--color-neutral-400)] transition-colors group-hover:text-[var(--color-neutral-600)]">
+                {showTemplates ? 'Hide' : 'Show'}
               </span>
             </button>
 
             {showTemplates && (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {templates.map((tpl) => (
-                  <Card key={tpl.id} hoverable padding="md" className="flex flex-col">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="rounded bg-[var(--color-primary)]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-primary)]">
-                        Template
-                      </span>
-                      {tpl.isPublicTemplate && (
-                        <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
-                          Public
+                  <div
+                    key={tpl.id}
+                    className="flex flex-col overflow-hidden rounded-[var(--radius-card)] border border-[var(--color-neutral-200)] bg-white shadow-[var(--shadow-card)] transition-all duration-200 [transition-timing-function:var(--ease-out-quart)] hover:-translate-y-0.5 hover:border-[var(--color-neutral-300)] hover:shadow-[var(--shadow-card-hover)]"
+                  >
+                    <div className="flex flex-1 flex-col p-5">
+                      <div className="mb-2 flex items-center gap-1.5">
+                        <span className="rounded-md bg-[var(--color-primary)]/10 px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold uppercase tracking-wider text-[var(--color-primary)]">
+                          Template
                         </span>
-                      )}
+                        {tpl.isPublicTemplate && (
+                          <span className="rounded-md bg-[var(--color-success)]/12 px-1.5 py-0.5 font-mono text-[0.65rem] font-semibold uppercase tracking-wider text-[var(--color-success)]">
+                            Public
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-[1.0625rem] font-semibold leading-snug text-[var(--color-neutral-900)]">
+                        {tpl.name}
+                      </h3>
+                      <p className="mt-1.5 flex-1 text-sm leading-relaxed text-[var(--color-neutral-500)] line-clamp-3">
+                        {tpl.description || 'No description'}
+                      </p>
+                      <div className="mt-3 flex items-center gap-3 font-mono text-[0.7rem] text-[var(--color-neutral-400)]">
+                        <span><span className="text-[var(--color-neutral-700)]">{tpl.nodeCount ?? 0}</span> nodes</span>
+                        <span className="text-[var(--color-neutral-200)]">·</span>
+                        <span><span className="text-[var(--color-neutral-700)]">{tpl.edgeCount ?? 0}</span> edges</span>
+                        <span className="text-[var(--color-neutral-200)]">·</span>
+                        <span><span className="text-[var(--color-neutral-700)]">{tpl.tagCount ?? 0}</span> tags</span>
+                      </div>
                     </div>
-                    <h3 className="mb-1 text-lg font-semibold text-[var(--color-neutral-900)]">
-                      {tpl.name}
-                    </h3>
-                    <p className="mb-2 flex-1 text-sm text-[var(--color-neutral-500)]">
-                      {tpl.description || 'No description'}
-                    </p>
-                    <p className="mb-4 text-xs text-[var(--color-neutral-400)]">
-                      {tpl.nodeCount ?? 0} nodes · {tpl.edgeCount ?? 0} edges · {tpl.tagCount ?? 0} tags
-                    </p>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2 border-t border-[var(--color-neutral-100)] px-5 py-3">
                       <Button
                         variant="primary"
                         size="sm"
@@ -258,7 +312,7 @@ export default function DashboardPage() {
                         </Button>
                       </Link>
                     </div>
-                  </Card>
+                  </div>
                 ))}
               </div>
             )}

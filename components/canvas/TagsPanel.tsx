@@ -250,8 +250,10 @@ export function TagsPanel({
 
   const panelBody = (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] px-4 py-3">
-        <h2 className="text-sm font-bold text-[var(--color-neutral-900)]">🏷️ Tags</h2>
+      <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] bg-white px-4 py-2.5">
+        <h2 className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-neutral-700)]">
+          Tags
+        </h2>
         {/* Close button exists only on mobile (overlay). Desktop is pinned. */}
         {isMobile ? (
           <button
@@ -444,7 +446,7 @@ export function TagsPanel({
   return (
     <div
       data-testid="tags-panel"
-      className="flex h-full w-72 shrink-0 flex-col border-r-2 border-[var(--color-neutral-300)] bg-[var(--color-neutral-100)]"
+      className="scroll-slim flex h-full w-72 shrink-0 flex-col overflow-y-auto border-r border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]"
     >
       {panelBody}
     </div>

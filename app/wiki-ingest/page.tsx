@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
+import { Wordmark } from '@/components/BrandMark';
 import { useToast } from '@/components/Toast';
 import { renderMarkdown } from './markdown';
 
@@ -162,45 +163,56 @@ export default function WikiIngestPage() {
 
   return (
     <div className="min-h-screen bg-[var(--color-neutral-50)]">
-      <header className="border-b border-[var(--color-neutral-200)] bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <h1 className="flex items-center gap-2 text-xl font-bold text-[var(--color-primary)]">
-            <span>📥</span> Wiki Ingest
-          </h1>
-          <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-[var(--z-sticky)] border-b border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
+          <div className="flex items-center gap-2.5">
+            <Link href="/dashboard" aria-label="toolsMD home">
+              <Wordmark />
+            </Link>
+            <span className="hidden h-5 w-px bg-[var(--color-neutral-200)] sm:block" />
+            <span className="hidden font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-neutral-500)] sm:inline">
+              Wiki Ingest
+            </span>
+          </div>
+          <nav className="flex items-center gap-1">
             <Link
               href="/docs"
-              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-primary)]"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
             >
-              📘 Docs
+              Docs
             </Link>
-            <Button variant="ghost" onClick={() => router.push('/dashboard')}>
-              ← Dashboard
+            <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard')}>
+              Dashboard
             </Button>
-          </div>
+          </nav>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <p className="mb-6 text-sm text-[var(--color-neutral-600)]">
-          วาง raw text อะไรก็ได้ แล้ว AI จะ (1) วิเคราะห์ความเพียงพอ (2) ค้นหาข้อมูลเสริมจาก
-          internet (3) แปลงเป็น Obsidian wiki page <strong>และสร้าง TMD project</strong>{' '}
-          (nodes + edges + tags) ให้อัตโนมัติ.
-        </p>
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
+        <div className="mb-6 max-w-2xl">
+          <h1 className="text-[1.9375rem] font-bold tracking-tight text-[var(--color-neutral-900)]">
+            Turn raw text into a wiki page and project
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-[var(--color-neutral-600)]">
+            วาง raw text อะไรก็ได้ แล้ว AI จะวิเคราะห์ความเพียงพอ ค้นหาข้อมูลเสริมจาก internet
+            แปลงเป็น Obsidian wiki page <strong className="font-semibold text-[var(--color-neutral-800)]">และสร้าง TMD project</strong>{' '}
+            (nodes + edges + tags) ให้อัตโนมัติ.
+          </p>
+        </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Input column */}
           <Card padding="lg" className="flex flex-col gap-4">
             <div>
               <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
-                Title <span className="text-[var(--color-error)]">*</span>
+                Title <span className="text-[var(--color-danger)]">*</span>
               </label>
               <input
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="ชื่อ wiki page"
-                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25"
               />
             </div>
 
@@ -215,7 +227,7 @@ export default function WikiIngestPage() {
                 onChange={(e) => setProjectName(e.target.value)}
                 placeholder={title || 'ชื่อ TMD project ที่จะสร้าง'}
                 disabled={!autoProject}
-                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none disabled:bg-[var(--color-neutral-100)] disabled:text-[var(--color-neutral-400)]"
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25 disabled:bg-[var(--color-neutral-100)] disabled:text-[var(--color-neutral-400)]"
               />
             </div>
 
@@ -229,20 +241,20 @@ export default function WikiIngestPage() {
                 value={tagsInput}
                 onChange={(e) => setTagsInput(e.target.value)}
                 placeholder="seo, marketing, notes"
-                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none"
+                className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25"
               />
             </div>
 
             <div className="flex flex-1 flex-col">
               <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
-                Raw content <span className="text-[var(--color-error)]">*</span>
+                Raw content <span className="text-[var(--color-danger)]">*</span>
               </label>
               <textarea
                 value={rawContent}
                 onChange={(e) => setRawContent(e.target.value)}
                 placeholder="วาง raw text ที่นี่..."
                 rows={14}
-                className="w-full flex-1 resize-y rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-sm focus:border-[var(--color-primary)] focus:outline-none"
+                className="w-full flex-1 resize-y rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-sm transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/25"
               />
             </div>
 
@@ -276,15 +288,15 @@ export default function WikiIngestPage() {
                 loading={processing}
                 className="w-full sm:w-auto"
               >
-                {processing ? 'Processing…' : 'Process & Save'}
+                {processing ? 'Processing…' : 'Process and save'}
               </Button>
             </div>
           </Card>
 
           {/* Preview column */}
-          <Card padding="lg" className="flex flex-col">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-[var(--color-neutral-700)]">
+          <Card padding="lg" className="flex min-h-[24rem] flex-col lg:sticky lg:top-24 lg:self-start">
+            <div className="mb-4 flex items-center justify-between gap-2 border-b border-[var(--color-neutral-100)] pb-3">
+              <h2 className="font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-neutral-600)]">
                 Wiki Preview
               </h2>
               {status.kind === 'done' && status.projectId && (
@@ -308,12 +320,18 @@ export default function WikiIngestPage() {
               />
             ) : wikiContent ? (
               <div
-                className="prose-wiki min-w-0 flex-1 overflow-auto text-sm leading-relaxed text-[var(--color-neutral-800)]"
+                className="prose-wiki scroll-slim min-w-0 flex-1 overflow-auto text-sm leading-relaxed text-[var(--color-neutral-800)]"
                 dangerouslySetInnerHTML={{ __html: previewHtml }}
               />
             ) : (
-              <div className="flex flex-1 items-center justify-center text-sm text-[var(--color-neutral-400)]">
-                Wiki output จะแสดงที่นี่หลังประมวลผล
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-300)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                  <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+                </svg>
+                <p className="text-sm text-[var(--color-neutral-400)]">
+                  Wiki output จะแสดงที่นี่หลังประมวลผล
+                </p>
               </div>
             )}
           </Card>
@@ -458,7 +476,7 @@ function StatusBadge({ status }: { status: Status }) {
     );
   }
   if (status.kind === 'error') {
-    return <span className="truncate text-sm text-[var(--color-error)]">✕ {status.message}</span>;
+    return <span className="truncate text-sm text-[var(--color-danger)]">✕ {status.message}</span>;
   }
   return <span className="text-sm text-[var(--color-neutral-400)]">idle</span>;
 }

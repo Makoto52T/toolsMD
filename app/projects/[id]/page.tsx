@@ -19,6 +19,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 
 import { Button } from '@/components/Button';
+import { BrandMark } from '@/components/BrandMark';
 import { Modal } from '@/components/Modal';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FullPageSpinner } from '@/components/LoadingSpinner';
@@ -994,24 +995,22 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   return (
     <div className="flex h-screen flex-col bg-white">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] px-4 py-3">
+      {/* Header — instrument top bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-neutral-200)] bg-white px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-3">
           <Link
             href="/dashboard"
-            className="shrink-0 text-sm font-medium text-[var(--color-primary)] hover:underline"
+            aria-label="Back to dashboard"
+            className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
           >
-            ← Dashboard
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+            <span className="hidden sm:inline">Dashboard</span>
           </Link>
-          <Link
-            href="/docs"
-            target="_blank"
-            className="shrink-0 text-sm font-medium text-[var(--color-neutral-500)] hover:text-[var(--color-primary)] hover:underline"
-          >
-            📘 Docs
-          </Link>
+          <div className="h-5 w-px shrink-0 bg-[var(--color-neutral-200)]" />
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-bold text-[var(--color-neutral-900)] sm:text-xl">
+            <h1 className="truncate text-[1.0625rem] font-bold tracking-tight text-[var(--color-neutral-900)]">
               {project?.name}
             </h1>
             {project?.description ? (
@@ -1021,41 +1020,49 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             ) : null}
           </div>
         </div>
-        {/* Action buttons. On mobile they are full md-size (≥44px touch target)
-            with condensed labels; on desktop they pack tighter as sm. */}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size={isMobile ? 'md' : 'sm'}
-            onClick={addNode}
-            leftIcon={<span className="leading-none">+</span>}
-          >
-            <span className="sm:hidden">Add</span>
-            <span className="hidden sm:inline">Add Node</span>
-          </Button>
+        {/* Action buttons. Execute is the single accent (the "run" signal);
+            everything else is neutral. On mobile md-size for ≥44px targets. */}
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             size={isMobile ? 'md' : 'sm'}
             variant="secondary"
-            onClick={openTemplatePicker}
+            onClick={addNode}
+            leftIcon={<span className="text-base leading-none">+</span>}
           >
-            <span aria-hidden>📋</span>
-            <span className="hidden sm:inline"> Load from template</span>
+            <span className="sm:hidden">Add</span>
+            <span className="hidden sm:inline">Add node</span>
           </Button>
           <Button
             size={isMobile ? 'md' : 'sm'}
-            variant="success"
+            variant="ghost"
+            onClick={openTemplatePicker}
+          >
+            <span className="sm:hidden">Tpl</span>
+            <span className="hidden sm:inline">Templates</span>
+          </Button>
+          <Button
+            size={isMobile ? 'md' : 'sm'}
+            variant="ghost"
             onClick={() => window.open(`/api/projects/${id}/export`, '_blank')}
           >
-            <span aria-hidden>📄</span>
-            <span className="hidden sm:inline"> Export</span>
+            Export
           </Button>
+          <div className="hidden h-5 w-px bg-[var(--color-neutral-200)] sm:block" />
           <Button
             size={isMobile ? 'md' : 'sm'}
             variant="primary"
             onClick={execute}
             loading={executing}
+            leftIcon={
+              !executing ? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              ) : undefined
+            }
           >
-            <span aria-hidden>▶️</span>
-            <span className="hidden sm:inline"> Execute</span>
+            <span className="sm:hidden">Run</span>
+            <span className="hidden sm:inline">Run chain</span>
           </Button>
         </div>
       </div>
@@ -1094,7 +1101,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             multiSelectionKeyCode={['Shift', 'Meta']}
             className="touch-none"
           >
-            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd5e1" />
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#d2d3d7" />
             <Controls showInteractive={false} />
             <MiniMap
               pannable
@@ -1109,10 +1116,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
         const emptyOverlay = nodes.length === 0 && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-            <div className="mb-3 text-4xl">🧩</div>
-            <p className="text-sm font-medium text-[var(--color-neutral-600)]">No nodes yet</p>
-            <p className="text-xs text-[var(--color-neutral-400)]">
-              Tap “Add” to start building your workflow.
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-dashed border-[var(--color-neutral-300)] bg-white/70">
+              <BrandMark size={30} tone="light" />
+            </div>
+            <p className="text-sm font-semibold text-[var(--color-neutral-700)]">Empty canvas</p>
+            <p className="mt-0.5 text-xs text-[var(--color-neutral-400)]">
+              Add a node to start wiring your architecture.
             </p>
           </div>
         );
@@ -1447,17 +1456,25 @@ function OutputColumn({
   // Collapsed: thin rail with a re-open button on the right edge.
   if (collapsed) {
     return (
-      <div className="flex h-full w-10 shrink-0 flex-col items-center border-l-2 border-[var(--color-neutral-300)] bg-[var(--color-neutral-100)] py-3">
+      <div className="flex h-full w-11 shrink-0 flex-col items-center border-l border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] py-3">
         <button
           type="button"
           onClick={onToggleCollapse}
           aria-label="Expand output panel"
           data-testid="output-expand"
-          className="rounded-lg p-1.5 text-lg hover:bg-[var(--color-neutral-100)]"
           title="Output"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-neutral-500)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
         >
-          📤
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
         </button>
+        <span
+          className="mt-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-[var(--color-neutral-400)]"
+          style={{ writingMode: 'vertical-rl' }}
+        >
+          Output
+        </span>
       </div>
     );
   }
@@ -1465,12 +1482,15 @@ function OutputColumn({
   return (
     <div
       data-testid="output-panel"
-      className="flex h-full w-96 shrink-0 flex-col border-l-2 border-[var(--color-neutral-300)] bg-[var(--color-neutral-100)]"
+      className="flex h-full w-96 shrink-0 flex-col border-l border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]"
     >
-      <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] px-4 py-3">
-        <h2 className="truncate text-sm font-bold text-[var(--color-neutral-900)]">
-          📤 Output{execPanel ? ` · ${execPanel.title}` : ''}
-        </h2>
+      <div className="flex items-center justify-between border-b border-[var(--color-neutral-200)] bg-white px-4 py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${execPanel ? 'bg-[var(--color-success)]' : 'bg-[var(--color-neutral-300)]'}`} />
+          <h2 className="truncate font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-neutral-700)]">
+            Output{execPanel ? ` · ${execPanel.title}` : ''}
+          </h2>
+        </div>
         <div className="flex shrink-0 items-center gap-1">
           {execPanel ? (
             <button
@@ -1478,7 +1498,7 @@ function OutputColumn({
               onClick={onClear}
               data-testid="output-clear"
               aria-label="Clear output"
-              className="rounded-lg px-2 py-1 text-xs text-[var(--color-neutral-500)] hover:bg-[var(--color-neutral-100)]"
+              className="rounded-lg px-2 py-1 text-xs font-medium text-[var(--color-neutral-500)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
             >
               Clear
             </button>
@@ -1488,23 +1508,29 @@ function OutputColumn({
             onClick={onToggleCollapse}
             aria-label="Collapse output panel"
             data-testid="output-collapse"
-            className="rounded-lg p-1 text-[var(--color-neutral-500)] hover:bg-[var(--color-neutral-100)]"
+            className="rounded-lg p-1.5 text-[var(--color-neutral-500)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
             title="Collapse"
           >
-            ⟩
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
           </button>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-4 py-3">
+      <div className="scroll-slim flex-1 overflow-y-auto px-4 py-3">
         {execPanel === null ? (
           <div
             data-testid="output-empty"
             className="flex h-full flex-col items-center justify-center text-center"
           >
-            <div className="mb-2 text-3xl">▶️</div>
-            <p className="text-sm font-medium text-[var(--color-neutral-600)]">No results yet</p>
-            <p className="mt-1 text-xs text-[var(--color-neutral-400)]">
-              Press Execute on a node or run the workflow to see results here.
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-[var(--color-neutral-200)] bg-white">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--color-neutral-400)">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+            <p className="text-sm font-semibold text-[var(--color-neutral-600)]">No runs yet</p>
+            <p className="mt-1 max-w-[15rem] text-xs leading-relaxed text-[var(--color-neutral-400)]">
+              Run a node or the whole chain to see status, headers, and parsed output here.
             </p>
           </div>
         ) : (

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { Wordmark } from '@/components/BrandMark';
 
 // Public documentation. No auth — anyone (logged out included) can read it.
 // Desktop: sticky sidebar nav + scrollable content. Mobile: accordion sections.
@@ -452,14 +453,20 @@ export default function DocsPage() {
 
   return (
     <div className="min-h-screen bg-[var(--color-neutral-50)]">
-      <header className="sticky top-0 z-10 border-b border-[var(--color-neutral-200)] bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <h1 className="flex items-center gap-2 text-xl font-bold text-[var(--color-primary)]">
-            <span>📘</span> ProjectPlanner Docs
-          </h1>
+      <header className="sticky top-0 z-[var(--z-sticky)] border-b border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)]/85 backdrop-blur-md">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3.5 sm:px-6">
+          <div className="flex items-center gap-2.5">
+            <Link href="/dashboard" aria-label="toolsMD home">
+              <Wordmark />
+            </Link>
+            <span className="hidden h-5 w-px bg-[var(--color-neutral-200)] sm:block" />
+            <span className="hidden font-mono text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-neutral-500)] sm:inline">
+              Docs
+            </span>
+          </div>
           <Link
             href="/dashboard"
-            className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-primary)]"
+            className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
           >
             Dashboard →
           </Link>

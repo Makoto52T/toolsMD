@@ -24,10 +24,10 @@ export function Card({
   return (
     <div
       className={[
-        'rounded-xl border border-[var(--color-neutral-200)] bg-white',
+        'rounded-[var(--radius-card)] border border-[var(--color-neutral-200)] bg-white',
         'shadow-[var(--shadow-card)]',
         hoverable
-          ? 'transition-shadow duration-200 hover:shadow-[var(--shadow-card-hover)]'
+          ? 'transition-all duration-200 [transition-timing-function:var(--ease-out-quart)] hover:-translate-y-0.5 hover:border-[var(--color-neutral-300)] hover:shadow-[var(--shadow-card-hover)]'
           : '',
         paddingMap[padding],
         className,
