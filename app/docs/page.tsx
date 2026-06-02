@@ -79,7 +79,7 @@ function Overview() {
       <P>A typical project has three moving parts:</P>
       <UL>
         <li><strong>Nodes</strong> — the units of work (an HTTP call, a JS function, a mock server, …).</li>
-        <li><strong>Edges</strong> — directed connections that define execution order and data flow.</li>
+        <li><strong>Edges</strong> — directed connections that define execution order and data flow. Hover an edge to highlight the whole line; click its <Code>✕</Code> to delete it.</li>
         <li><strong>Tags</strong> — typed, reusable values (a domain, a token, a body field) referenced anywhere with <Code>{'{{tagKey}}'}</Code>.</li>
       </UL>
       <P>

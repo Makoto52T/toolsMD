@@ -95,6 +95,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   } | null>(null);
   // Per-node spinner state (single-node execute).
   const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
+  // Which edge the pointer is currently over — drives the whole-edge hover
+  // highlight in DeletableEdge (fed in via each edge's `data.hovered`).
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   // Loop mode: which nodes are currently looping. Keyed by nodeId ->
   // { round, total } where round is the 1-based current iteration and total is
   // the configured number of rounds. A node present in the map is looping.
@@ -913,9 +916,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         type: 'deletable',
         animated: true,
         style: { strokeWidth: 2, stroke: '#94a3b8' },
-        data: { onDelete: deleteEdge },
+        data: { onDelete: deleteEdge, hovered: e.id === hoveredEdgeId },
       })),
-    [edges, deleteEdge],
+    [edges, deleteEdge, hoveredEdgeId],
   );
 
   const nodeTypes = useMemo(() => ({ tmd: FlowNode }), []);
@@ -1064,6 +1067,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               onNodesChange={onNodesChange}
               onConnect={onConnect}
               onEdgesDelete={onEdgesDelete}
+              onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
+              onEdgeMouseLeave={() => setHoveredEdgeId(null)}
               fitView
               minZoom={0.2}
               maxZoom={2}
