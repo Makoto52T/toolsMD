@@ -2,8 +2,23 @@
 
 import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from 'reactflow';
 
-/** Color the whole edge highlights to while hovered. */
-const HOVER_STROKE = 'var(--color-primary, #3b82f6)';
+/** Fallback stroke when an edge has no source-derived colour. */
+const FALLBACK_STROKE = '#94a3b8';
+
+/**
+ * Expand a #rgb/#rrggbb hex into an `rgba(r,g,b,a)` string. Used to build the
+ * hover glow from the edge's own (source-node) colour instead of a fixed blue.
+ */
+function hexToRgba(hex: string, alpha: number): string {
+  let h = hex.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h, 16);
+  if (h.length !== 6 || Number.isNaN(n)) return `rgba(59,130,246,${alpha})`;
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 /**
  * Edge with an always-visible ✕ button rendered at its midpoint so users can
@@ -22,6 +37,9 @@ const HOVER_STROKE = 'var(--color-primary, #3b82f6)';
 export type DeletableEdgeData = {
   onDelete?: (edgeId: string) => void;
   hovered?: boolean;
+  // Colour of the edge, derived from its source node's type (passed by the
+  // canvas). Drives both the resting stroke and the lightened hover glow.
+  sourceColor?: string;
 };
 
 export function DeletableEdge({
@@ -38,6 +56,7 @@ export function DeletableEdge({
   data,
 }: EdgeProps<DeletableEdgeData>) {
   const hovered = data?.hovered ?? false;
+  const sourceColor = data?.sourceColor ?? FALLBACK_STROKE;
 
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
@@ -53,9 +72,11 @@ export function DeletableEdge({
     transition: 'stroke 0.15s ease, stroke-width 0.15s ease, filter 0.15s ease',
     ...(hovered
       ? {
-          stroke: HOVER_STROKE,
+          // Keep the source colour but brighten it + add a matching glow so the
+          // hovered edge pops in its own hue rather than a generic blue.
+          stroke: sourceColor,
           strokeWidth: 3,
-          filter: 'drop-shadow(0 0 5px rgba(59, 130, 246, 0.6))',
+          filter: `brightness(1.25) drop-shadow(0 0 5px ${hexToRgba(sourceColor, 0.6)})`,
         }
       : null),
   };

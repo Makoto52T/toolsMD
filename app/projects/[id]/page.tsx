@@ -1100,9 +1100,19 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     });
   }, [nodes, buildData]);
 
-  const rfEdges: RFEdge[] = useMemo(
-    () =>
-      edges.map((e) => ({
+  const rfEdges: RFEdge[] = useMemo(() => {
+    // Colour each edge by its SOURCE node's type so a connection visually
+    // "belongs" to the node it flows out of. nodeDisplayMeta handles server
+    // nodes (whose colour varies by config). Fall back to neutral slate.
+    const colorByNodeId = new Map(
+      nodes.map((n) => [
+        n.id,
+        nodeDisplayMeta(n.type, n.config as Record<string, any> | undefined).color,
+      ]),
+    );
+    return edges.map((e) => {
+      const sourceColor = colorByNodeId.get(e.sourceNodeId) ?? '#94a3b8';
+      return {
         id: e.id,
         source: e.sourceNodeId,
         target: e.targetNodeId,
@@ -1111,11 +1121,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         label: e.label || undefined,
         type: 'deletable',
         animated: true,
-        style: { strokeWidth: 2, stroke: '#94a3b8' },
-        data: { onDelete: deleteEdge, hovered: e.id === hoveredEdgeId },
-      })),
-    [edges, deleteEdge, hoveredEdgeId],
-  );
+        style: { strokeWidth: 2, stroke: sourceColor },
+        data: { onDelete: deleteEdge, hovered: e.id === hoveredEdgeId, sourceColor },
+      };
+    });
+  }, [edges, nodes, deleteEdge, hoveredEdgeId]);
 
   const nodeTypes = useMemo(() => ({ tmd: FlowNode }), []);
   const edgeTypes = useMemo(() => ({ deletable: DeletableEdge }), []);
@@ -1464,7 +1474,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         open={!!editingNode}
         onClose={() => setEditingNode(null)}
         title="Edit Node"
-        widthClass="max-w-[548px]"
+        widthClass="max-w-[798px]"
         dismissable={false}
         footer={
           <div className="flex justify-end gap-2">

@@ -76,7 +76,10 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
           : 'shadow-[0_1px_2px_0_rgb(17_20_24/0.06),0_4px_10px_-4px_rgb(17_20_24/0.10)] hover:shadow-[0_6px_18px_-6px_rgb(17_20_24/0.18)]',
       ].join(' ')}
       style={{
-        borderColor: isNew ? NEW_COLOR : selected ? meta.color : '#dcdde0',
+        // Default border tints to the node-type colour (low opacity, ~38%) so
+        // each type reads as its own colour at rest; selected uses the full
+        // colour + thicker border; isNew uses the vermilion pulse.
+        borderColor: isNew ? NEW_COLOR : selected ? meta.color : `${meta.color}61`,
         borderWidth: isNew || selected ? 2 : 1,
       }}
     >
