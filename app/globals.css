@@ -112,3 +112,20 @@ body {
 .ds-animate-toast-in {
   animation: ds-toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+/* Wiki Ingest preview — minimal prose styling for renderMarkdown() output. */
+.prose-wiki h1 { font-size: 1.4rem; font-weight: 700; margin: 0.8rem 0 0.5rem; color: var(--color-neutral-900); }
+.prose-wiki h2 { font-size: 1.15rem; font-weight: 700; margin: 1rem 0 0.4rem; padding-bottom: 0.2rem; border-bottom: 1px solid var(--color-neutral-200); color: var(--color-neutral-900); }
+.prose-wiki h3 { font-size: 1rem; font-weight: 600; margin: 0.8rem 0 0.3rem; color: var(--color-neutral-800); }
+.prose-wiki p { margin: 0.4rem 0; }
+.prose-wiki ul { list-style: disc; padding-left: 1.4rem; margin: 0.4rem 0; }
+.prose-wiki li { margin: 0.15rem 0; }
+.prose-wiki hr { border: 0; border-top: 1px solid var(--color-neutral-200); margin: 0.8rem 0; }
+.prose-wiki a { color: var(--color-primary); text-decoration: underline; }
+.prose-wiki .wiki-link { color: var(--color-neutral-400); font-family: monospace; font-size: 0.85em; }
+.prose-wiki .wiki-code { background: var(--color-neutral-100); color: var(--color-primary); padding: 0.1rem 0.3rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.85em; }
+.prose-wiki .wiki-pre, .prose-wiki .wiki-frontmatter { background: var(--color-neutral-900); color: var(--color-neutral-100); padding: 0.75rem; border-radius: 0.5rem; overflow-x: auto; margin: 0.6rem 0; font-size: 0.8rem; }
+.prose-wiki .wiki-frontmatter { background: var(--color-neutral-100); color: var(--color-neutral-600); border: 1px solid var(--color-neutral-200); }
+.prose-wiki .wiki-table { border-collapse: collapse; width: 100%; margin: 0.6rem 0; font-size: 0.85em; }
+.prose-wiki .wiki-table th, .prose-wiki .wiki-table td { border: 1px solid var(--color-neutral-200); padding: 0.35rem 0.5rem; text-align: left; }
+.prose-wiki .wiki-table th { background: var(--color-neutral-100); font-weight: 600; }

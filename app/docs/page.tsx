@@ -21,6 +21,7 @@ const SECTIONS: Section[] = [
   { id: 'execution', title: 'Execution', icon: '▶️' },
   { id: 'loop', title: 'Loop Mode', icon: '🔁' },
   { id: 'templates', title: 'Templates', icon: '📋' },
+  { id: 'wiki-ingest', title: 'Wiki Ingest', icon: '📥' },
   { id: 'tips', title: 'Tips', icon: '💡' },
 ];
 
@@ -333,6 +334,39 @@ function Templates() {
   );
 }
 
+function WikiIngest() {
+  return (
+    <section>
+      <H2 id="wiki-ingest" icon="📥">Wiki Ingest</H2>
+      <P>
+        <strong>Wiki Ingest</strong> turns any raw text — markdown, notes, code, or plain text — into a clean
+        Obsidian-style wiki page using AI, then saves it two ways: as a file in the <Code>ai-wiki</Code> knowledge
+        base and as a private TMD template you own.
+      </P>
+      <H3>How to use</H3>
+      <UL>
+        <li>Open <strong>📥 Wiki Ingest</strong> from the dashboard header.</li>
+        <li>Enter a <strong>Title</strong> (used for the wiki filename and template name).</li>
+        <li>Optionally add comma-separated <strong>topic tags</strong>.</li>
+        <li>Paste your <strong>raw content</strong> and click <strong>Process &amp; Save</strong>.</li>
+      </UL>
+      <H3>What happens</H3>
+      <UL>
+        <li>AI rewrites the content into a wiki page with YAML frontmatter, <Code>## sections</Code>, and{' '}
+          <Code>[[backlinks]]</Code> to the index.</li>
+        <li>The page is written to <Code>ai-wiki/wiki/&lt;slug&gt;.md</Code> and logged in <Code>log.md</Code>.</li>
+        <li>A private template is created with a <strong>Wiki Source</strong> node (your raw input) and a{' '}
+          <strong>Wiki Output</strong> node (the generated page). Find it in the dashboard <strong>Templates</strong>{' '}
+          section.</li>
+      </UL>
+      <P>
+        The generated markdown is shown live in the <strong>Preview</strong> panel so you can review it before
+        navigating away.
+      </P>
+    </section>
+  );
+}
+
 function Tips() {
   return (
     <section>
@@ -365,6 +399,7 @@ const BODIES: Record<string, () => React.JSX.Element> = {
   execution: Execution,
   loop: LoopMode,
   templates: Templates,
+  'wiki-ingest': WikiIngest,
   tips: Tips,
 };
 
