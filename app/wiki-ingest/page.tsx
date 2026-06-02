@@ -48,6 +48,8 @@ export default function WikiIngestPage() {
   const [autoProject, setAutoProject] = useState(true);
   const [wikiContent, setWikiContent] = useState('');
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const [deleting, setDeleting] = useState(false);
+  const [templateDeleted, setTemplateDeleted] = useState(false);
   const router = useRouter();
   const toast = useToast();
 
@@ -64,6 +66,7 @@ export default function WikiIngestPage() {
       return;
     }
     setWikiContent('');
+    setTemplateDeleted(false);
     setStatus({ kind: 'processing', step: 'analyzing' });
 
     // The server returns once; advance the visible step on a soft timer so the
@@ -124,6 +127,36 @@ export default function WikiIngestPage() {
       const msg = e?.message || 'Network error';
       setStatus({ kind: 'error', message: msg });
       toast.error(msg);
+    }
+  };
+
+  const handleDeleteTemplate = async () => {
+    if (status.kind !== 'done' || !status.projectId) return;
+    const projectId = status.projectId;
+    if (
+      !window.confirm(
+        `ลบ template '${title}' ออกจาก TMD? wiki page ยังคงอยู่`
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/wiki/ingest/template/${projectId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data?.error || 'Delete failed';
+        toast.error(msg);
+        return;
+      }
+      setTemplateDeleted(true);
+      toast.success('Template ลบแล้ว (wiki ยังอยู่)');
+    } catch (e: any) {
+      toast.error(e?.message || 'Network error');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -262,7 +295,12 @@ export default function WikiIngestPage() {
             {processing ? (
               <Stepper current={status.step} webSearch={webSearch} autoProject={autoProject} />
             ) : status.kind === 'done' ? (
-              <DoneSummary info={status} />
+              <DoneSummary
+                info={status}
+                deleted={templateDeleted}
+                deleting={deleting}
+                onDelete={handleDeleteTemplate}
+              />
             ) : wikiContent ? (
               <div
                 className="prose-wiki min-w-0 flex-1 overflow-auto text-sm leading-relaxed text-[var(--color-neutral-800)]"
@@ -342,7 +380,17 @@ function Stepper({
   );
 }
 
-function DoneSummary({ info }: { info: DoneInfo }) {
+function DoneSummary({
+  info,
+  deleted,
+  deleting,
+  onDelete,
+}: {
+  info: DoneInfo;
+  deleted: boolean;
+  deleting: boolean;
+  onDelete: () => void;
+}) {
   const wikiName = info.wikiPath.split('/').slice(-1)[0];
   return (
     <div className="flex flex-1 flex-col gap-3 text-sm">
@@ -356,7 +404,7 @@ function DoneSummary({ info }: { info: DoneInfo }) {
           ✅ Wiki page: <code className="font-mono text-xs">wiki/{wikiName}</code>
         </li>
         <li>{info.usedWebSearch ? '🔍 ใช้ข้อมูลเสริมจาก internet' : '🔍 ไม่ได้ค้นเว็บเพิ่ม (content เพียงพอ)'}</li>
-        {info.projectId ? (
+        {info.projectId && !deleted ? (
           <li>
             📊 TMD project: {info.nodeCount} nodes, {info.edgeCount} edges —{' '}
             <Link
@@ -366,6 +414,8 @@ function DoneSummary({ info }: { info: DoneInfo }) {
               เปิด project →
             </Link>
           </li>
+        ) : info.projectId && deleted ? (
+          <li className="text-[var(--color-success)]">🗑️ Template ลบแล้ว (wiki ยังอยู่)</li>
         ) : (
           <li className="text-[var(--color-neutral-400)]">📊 ไม่ได้สร้าง project</li>
         )}
@@ -374,6 +424,13 @@ function DoneSummary({ info }: { info: DoneInfo }) {
         <p className="rounded-lg bg-[var(--color-warning-50,#fff7ed)] px-3 py-2 text-xs text-[var(--color-warning,#b45309)]">
           ⚠️ {info.warning}
         </p>
+      )}
+      {info.projectId && !deleted && (
+        <div className="mt-1">
+          <Button variant="danger" size="sm" onClick={onDelete} disabled={deleting} loading={deleting}>
+            🗑️ ลบ Template
+          </Button>
+        </div>
       )}
     </div>
   );
