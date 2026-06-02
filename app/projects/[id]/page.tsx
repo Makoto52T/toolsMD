@@ -15,6 +15,7 @@ import ReactFlow, {
   NodeChange,
   BackgroundVariant,
   SelectionMode,
+  ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -180,6 +181,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // state flushes async). Rapid Add-node clicks read this so two new nodes in
   // the same tick don't compute the same slot and stack on top of each other.
   const pendingPlacementsRef = useRef<Array<{ x: number; y: number }>>([]);
+  // The React Flow instance, captured via onInit. We call `fitView` on it to
+  // pan+zoom the viewport onto a node right after it's created. Using the
+  // instance ref (rather than the useReactFlow hook) avoids having to wrap this
+  // component in a ReactFlowProvider, since <ReactFlow> is rendered here too.
+  const rfInstanceRef = useRef<ReactFlowInstance<FlowNodeData> | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ApiNode | null>(null);
   const [executing, setExecuting] = useState(false);
@@ -302,6 +308,27 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     };
   }, []);
 
+  // Pan + zoom the viewport onto a freshly created node. We center on the
+  // node's known placement position (plus half an estimated node footprint)
+  // rather than calling `fitView({ nodes: [id] })`: a just-created node has no
+  // measured width/height yet, so fitView computes a zero-size bounds and
+  // silently no-ops. `setCenter` needs only the position we already have, so it
+  // works on the very first frame. We bump the zoom up to at least 0.85 (capped
+  // at 1) so the new node is comfortably readable even if the user was zoomed
+  // far out, but never zoom *out* past their current level.
+  const focusNode = useCallback(
+    (nodeId: string, pos: { x: number; y: number }) => {
+      const inst = rfInstanceRef.current;
+      if (!inst) return;
+      const zoom = Math.min(1, Math.max(inst.getZoom(), 0.85));
+      inst.setCenter(pos.x + NODE_W / 2, pos.y + NODE_H / 2, {
+        duration: 400,
+        zoom,
+      });
+    },
+    [],
+  );
+
   // ---- Node CRUD ----
   const addNode = async () => {
     // Place into empty space, accounting for nodes already on the canvas AND any
@@ -333,6 +360,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         markNewNode(created.id);
         // The node is now in rfNodes; stop double-counting its reserved slot.
         clearPending();
+        focusNode(created.id, pos);
         toast.success('Node added');
       } else {
         clearPending();
@@ -1240,6 +1268,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             connectionMode={ConnectionMode.Loose}
+            onInit={(inst) => {
+              rfInstanceRef.current = inst as ReactFlowInstance<FlowNodeData>;
+            }}
             onNodesChange={onNodesChange}
             onConnect={onConnect}
             onEdgesDelete={onEdgesDelete}
