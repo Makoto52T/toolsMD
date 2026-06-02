@@ -5,18 +5,28 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 // Wiki Ingest: takes raw text, asks DeepSeek to turn it into an Obsidian-style
-// wiki page, writes the page to /root/ai-wiki/wiki/<slug>.md, appends a log
-// line, and saves a private TMD template owned by the current user that holds
-// the raw input (Wiki Source node) and generated output (Wiki Output node).
+// wiki page, writes the page to wiki/<slug>.md (local FS on the VPS, or via the
+// GitHub Contents API to Makoto52T/ai-wiki on Vercel), appends a log line, and
+// saves a private TMD template owned by the current user that holds the raw
+// input (Wiki Source node) and generated output (Wiki Output node).
 
 // File ops touch the local filesystem, so this must run on Node, never Edge.
 export const runtime = 'nodejs';
 
-// Base dir is overridable for non-VPS/dev environments; defaults to the live
-// ai-wiki repo path on the server.
-const WIKI_ROOT = process.env.AI_WIKI_DIR || '/root/ai-wiki';
+// Two write backends:
+//  - VPS mode: AI_WIKI_DIR is set -> write to the local ai-wiki checkout.
+//  - Vercel mode: filesystem is read-only -> commit straight to the
+//    Makoto52T/ai-wiki repo via the GitHub Contents API.
+// AI_WIKI_DIR decides which path we take (presence == VPS mode).
+const AI_WIKI_DIR = process.env.AI_WIKI_DIR;
+const WIKI_ROOT = AI_WIKI_DIR || '/root/ai-wiki';
 const WIKI_DIR = path.join(WIKI_ROOT, 'wiki');
 const LOG_FILE = path.join(WIKI_ROOT, 'log.md');
+
+// GitHub Contents API target for Vercel mode.
+const GH_REPO = 'Makoto52T/ai-wiki';
+const GH_BRANCH = 'main';
+const GH_API = 'https://api.github.com';
 
 // Slugify a title into a safe filename: lowercase, ascii word chars + dashes.
 // Falls back to a timestamp slug when the title has no usable ascii (e.g. an
@@ -104,32 +114,17 @@ export async function POST(request: NextRequest) {
     .replace(/\n```\s*$/i, '')
     .trim();
 
-  // 2) Write wiki page to /root/ai-wiki/wiki/<slug>.md (de-dupe on collision).
+  // 2+3) Persist the wiki page + append a log line, via whichever backend
+  // this environment supports (local FS on VPS, GitHub API on Vercel).
   let wikiPath: string;
+  const date = new Date().toISOString().slice(0, 10);
+  const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
   try {
-    await fs.mkdir(WIKI_DIR, { recursive: true });
-    const slug = slugify(title);
-    let filename = `${slug}.md`;
-    let target = path.join(WIKI_DIR, filename);
-    // Avoid clobbering an existing page with the same slug.
-    let n = 2;
-    // eslint-disable-next-line no-await-in-loop
-    while (await fileExists(target)) {
-      filename = `${slug}-${n}.md`;
-      target = path.join(WIKI_DIR, filename);
-      n += 1;
+    if (AI_WIKI_DIR) {
+      wikiPath = await writeWikiToDisk(title, wikiContent, date, tagSuffix);
+    } else {
+      wikiPath = await writeWikiToGitHub(title, wikiContent, date, tagSuffix);
     }
-    await fs.writeFile(target, wikiContent + '\n', 'utf8');
-    wikiPath = target;
-
-    // 3) Append a log line.
-    const date = new Date().toISOString().slice(0, 10);
-    const tagSuffix = tags.length ? ` [${tags.join(', ')}]` : '';
-    await fs.appendFile(
-      LOG_FILE,
-      `${date} — Wiki Ingest: wiki/${filename} — ${title}${tagSuffix}\n`,
-      'utf8'
-    );
   } catch (e: any) {
     return NextResponse.json(
       { error: `Failed to write wiki file: ${e?.message || 'unknown error'}` },
@@ -192,5 +187,126 @@ async function fileExists(p: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+// ---- VPS backend: write to the local ai-wiki checkout ----------------------
+// Returns the absolute path written.
+async function writeWikiToDisk(
+  title: string,
+  wikiContent: string,
+  date: string,
+  tagSuffix: string
+): Promise<string> {
+  await fs.mkdir(WIKI_DIR, { recursive: true });
+  const slug = slugify(title);
+  let filename = `${slug}.md`;
+  let target = path.join(WIKI_DIR, filename);
+  // Avoid clobbering an existing page with the same slug.
+  let n = 2;
+  // eslint-disable-next-line no-await-in-loop
+  while (await fileExists(target)) {
+    filename = `${slug}-${n}.md`;
+    target = path.join(WIKI_DIR, filename);
+    n += 1;
+  }
+  await fs.writeFile(target, wikiContent + '\n', 'utf8');
+  await fs.appendFile(
+    LOG_FILE,
+    `${date} — Wiki Ingest: wiki/${filename} — ${title}${tagSuffix}\n`,
+    'utf8'
+  );
+  return target;
+}
+
+// ---- Vercel backend: commit to Makoto52T/ai-wiki via GitHub Contents API ----
+// Returns the repo-relative path written (wiki/<filename>).
+async function writeWikiToGitHub(
+  title: string,
+  wikiContent: string,
+  date: string,
+  tagSuffix: string
+): Promise<string> {
+  const token = process.env.GITHUB_API_TOKEN;
+  if (!token) {
+    throw new Error('GITHUB_API_TOKEN not configured on the server');
+  }
+
+  // Collision-proof filename: append a timestamp so a duplicate slug never
+  // triggers the GitHub 422 "sha required to update" path.
+  const slug = slugify(title);
+  const filename = `${slug}-${Date.now()}.md`;
+  const repoPath = `wiki/${filename}`;
+
+  await ghPutFile(
+    token,
+    repoPath,
+    wikiContent + '\n',
+    `ingest: ${title}`,
+    undefined // brand-new file, no sha
+  );
+
+  // Append a log entry: read current log.md, append our line, commit it back.
+  try {
+    const log = await ghGetFile(token, 'log.md');
+    const newLog =
+      log.content + `${date} — Wiki Ingest: ${repoPath} — ${title}${tagSuffix}\n`;
+    await ghPutFile(token, 'log.md', newLog, `log: ${title}`, log.sha);
+  } catch {
+    // Log append is best-effort; the wiki page already committed.
+  }
+
+  return repoPath;
+}
+
+// GET a file's decoded content + blob sha from the repo.
+async function ghGetFile(
+  token: string,
+  repoPath: string
+): Promise<{ content: string; sha: string }> {
+  const res = await fetch(
+    `${GH_API}/repos/${GH_REPO}/contents/${repoPath}?ref=${GH_BRANCH}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'tmd-wiki-ingest',
+      },
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`GitHub GET ${repoPath} failed: ${res.status}`);
+  }
+  const data: any = await res.json();
+  const content = Buffer.from(data.content, 'base64').toString('utf8');
+  return { content, sha: data.sha };
+}
+
+// PUT (create or update) a file. Pass sha to update an existing file.
+async function ghPutFile(
+  token: string,
+  repoPath: string,
+  content: string,
+  message: string,
+  sha?: string
+): Promise<void> {
+  const res = await fetch(`${GH_API}/repos/${GH_REPO}/contents/${repoPath}`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'User-Agent': 'tmd-wiki-ingest',
+    },
+    body: JSON.stringify({
+      message,
+      content: Buffer.from(content).toString('base64'),
+      branch: GH_BRANCH,
+      ...(sha ? { sha } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`GitHub PUT ${repoPath} failed: ${res.status} ${detail}`);
   }
 }
