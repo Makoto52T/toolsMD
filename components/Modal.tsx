@@ -9,6 +9,9 @@ interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  // Tailwind max-width class that overrides `size` when provided. Used when a
+  // modal needs a specific pixel width rather than one of the named sizes.
+  widthClass?: string;
   // When false, the modal can only be closed via the X button or an explicit
   // action in the footer (e.g. Cancel) — backdrop click and Esc are disabled.
   // Used for long config forms (node edit) to prevent accidental dismissal.
@@ -29,6 +32,7 @@ export function Modal({
   children,
   footer,
   size = 'md',
+  widthClass,
   dismissable = true,
 }: ModalProps) {
   useEffect(() => {
@@ -55,7 +59,7 @@ export function Modal({
         className={[
           'ds-animate-slide-up flex max-h-[92vh] w-full flex-col overflow-hidden bg-white shadow-2xl',
           'rounded-t-2xl sm:rounded-2xl',
-          sizeMap[size],
+          widthClass ?? sizeMap[size],
         ].join(' ')}
         onClick={(e) => e.stopPropagation()}
         role="dialog"

@@ -1464,6 +1464,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         open={!!editingNode}
         onClose={() => setEditingNode(null)}
         title="Edit Node"
+        widthClass="max-w-[548px]"
         dismissable={false}
         footer={
           <div className="flex justify-end gap-2">
