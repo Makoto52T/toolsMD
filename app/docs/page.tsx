@@ -340,28 +340,40 @@ function WikiIngest() {
       <H2 id="wiki-ingest" icon="📥">Wiki Ingest</H2>
       <P>
         <strong>Wiki Ingest</strong> turns any raw text — markdown, notes, code, or plain text — into a clean
-        Obsidian-style wiki page using AI, then saves it two ways: as a file in the <Code>ai-wiki</Code> knowledge
-        base and as a private TMD template you own.
+        Obsidian-style wiki page <em>and</em> a ready-to-run TMD project, in one pass. It runs a small AI pipeline
+        that can pull in extra context from the web before generating both outputs.
       </P>
       <H3>How to use</H3>
       <UL>
         <li>Open <strong>📥 Wiki Ingest</strong> from the dashboard header.</li>
-        <li>Enter a <strong>Title</strong> (used for the wiki filename and template name).</li>
-        <li>Optionally add comma-separated <strong>topic tags</strong>.</li>
-        <li>Paste your <strong>raw content</strong> and click <strong>Process &amp; Save</strong>.</li>
+        <li>Enter a <strong>Title</strong> (used for the wiki filename).</li>
+        <li>Optionally set a <strong>Project name</strong> (defaults to the title) and comma-separated{' '}
+          <strong>topic tags</strong>.</li>
+        <li>Leave <Code>🔍 ค้นหาข้อมูลเพิ่มจาก internet</Code> and <Code>📊 สร้าง TMD Project อัตโนมัติ</Code>{' '}
+          on (or toggle them off), paste your <strong>raw content</strong>, and click <strong>Process &amp; Save</strong>.</li>
       </UL>
-      <H3>What happens</H3>
+      <H3>The pipeline</H3>
       <UL>
-        <li>AI rewrites the content into a wiki page with YAML frontmatter, <Code>## sections</Code>, and{' '}
-          <Code>[[backlinks]]</Code> to the index.</li>
-        <li>The page is written to <Code>ai-wiki/wiki/&lt;slug&gt;.md</Code> and logged in <Code>log.md</Code>.</li>
-        <li>A private template is created with a <strong>Wiki Source</strong> node (your raw input) and a{' '}
-          <strong>Wiki Output</strong> node (the generated page). Find it in the dashboard <strong>Templates</strong>{' '}
-          section.</li>
+        <li><strong>Analyze</strong> — the AI summarizes the content and decides whether it&apos;s enough to draw an
+          architecture diagram; if not, it plans 2–3 search queries.</li>
+        <li><strong>Search</strong> (optional) — when web search is on and the content is thin, it queries the web
+          (Tavily) for extra context. With no <Code>TAVILY_API_KEY</Code> configured this step is skipped
+          gracefully.</li>
+        <li><strong>Generate</strong> — produces both the wiki page (YAML frontmatter, <Code>## sections</Code>,{' '}
+          <Code>[[backlinks]]</Code>) and a project schema (tags, nodes, edges).</li>
+        <li><strong>Create project</strong> — builds a real TMD project from the schema: typed tags, nodes placed
+          left-to-right, and edges wired between them.</li>
+      </UL>
+      <H3>What you get</H3>
+      <UL>
+        <li>A wiki page written to <Code>ai-wiki/wiki/&lt;slug&gt;.md</Code> (committed via the GitHub API on the
+          hosted app) and logged in <Code>log.md</Code>.</li>
+        <li>A new <strong>project</strong> on your dashboard (e.g. an <Code>HTTP Login → Get Token → Puppeteer</Code>{' '}
+          flow), opened directly from the result panel — node and edge counts are shown.</li>
       </UL>
       <P>
-        The generated markdown is shown live in the <strong>Preview</strong> panel so you can review it before
-        navigating away.
+        The result panel shows the AI&apos;s summary, whether web context was used, and a link to open the generated
+        project; the full wiki markdown renders below for review.
       </P>
     </section>
   );
