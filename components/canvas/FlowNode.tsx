@@ -18,6 +18,9 @@ export interface FlowNodeData {
   // for-loop to break at its next boundary.
   onStopLoop?: (id: string) => void;
   executing?: boolean;
+  // True while this node is freshly created and not yet settled — drives a
+  // vermilion pulse/glow border so the user can spot what they just added.
+  isNew?: boolean;
   looping?: boolean;
   loopRound?: number;
   loopTotal?: number;
@@ -50,6 +53,9 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
   const loopEnabled = cfg.loopEnabled === true;
   const looping = data.looping === true;
+  const isNew = data.isNew === true;
+  // Vermilion used for the freshly-created pulse border.
+  const NEW_COLOR = '#cf3a1e';
 
   // Four connection handles (top/bottom/left/right). With ConnectionMode.Loose
   // on the canvas, every handle works as BOTH source and target — the edge's
@@ -61,17 +67,29 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
 
   return (
     <div
+      data-testid={isNew ? 'flow-node-new' : 'flow-node'}
       className={[
         'w-[186px] overflow-hidden rounded-xl border bg-white transition-all duration-150',
+        isNew ? 'tmd-node-new' : '',
         selected
           ? 'shadow-[0_8px_24px_-6px_rgb(17_20_24/0.22)]'
           : 'shadow-[0_1px_2px_0_rgb(17_20_24/0.06),0_4px_10px_-4px_rgb(17_20_24/0.10)] hover:shadow-[0_6px_18px_-6px_rgb(17_20_24/0.18)]',
       ].join(' ')}
       style={{
-        borderColor: selected ? meta.color : '#dcdde0',
-        borderWidth: selected ? 2 : 1,
+        borderColor: isNew ? NEW_COLOR : selected ? meta.color : '#dcdde0',
+        borderWidth: isNew || selected ? 2 : 1,
       }}
     >
+      {isNew ? (
+        <style>{`
+          @keyframes tmdNewPulse {
+            0%   { box-shadow: 0 0 0 0 rgba(207,58,30,0.55), 0 0 0 1px rgba(207,58,30,0.9); }
+            70%  { box-shadow: 0 0 0 8px rgba(207,58,30,0), 0 0 0 1px rgba(207,58,30,0.9); }
+            100% { box-shadow: 0 0 0 0 rgba(207,58,30,0), 0 0 0 1px rgba(207,58,30,0.9); }
+          }
+          .tmd-node-new { animation: tmdNewPulse 1.4s ease-out infinite; }
+        `}</style>
+      ) : null}
       <Handle
         id="top"
         type="source"

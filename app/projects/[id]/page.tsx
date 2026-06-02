@@ -71,6 +71,88 @@ interface ApiEdge {
   targetHandle?: string | null;
 }
 
+// Default RFNode footprint before React Flow has measured it. Width matches the
+// FlowNode card exactly (186px). Height is the typical measured card height
+// (~95px for a bare node; taller env/server cards are still covered by the gap).
+const NODE_W = 186;
+const NODE_H = 110;
+// Gap kept clear around every existing node so a freshly placed node never
+// visually touches its neighbours.
+const PLACE_GAP = 36;
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+function boxesOverlap(a: Box, b: Box, gap = 0): boolean {
+  return (
+    a.x < b.x + b.w + gap &&
+    a.x + a.w + gap > b.x &&
+    a.y < b.y + b.h + gap &&
+    a.y + a.h + gap > b.y
+  );
+}
+
+/**
+ * Find an empty canvas position for a new node so it never lands on top of an
+ * existing node. Searches outward in a growing square spiral from an anchor
+ * point (the centroid of existing nodes, or a default), stepping STEP px at a
+ * time, and returns the first slot whose footprint clears every existing box.
+ */
+function findEmptyPosition(
+  existing: Array<{ position: { x: number; y: number }; width?: number | null; height?: number | null }>,
+  pending: Array<{ x: number; y: number }> = [],
+): { x: number; y: number } {
+  const boxes: Box[] = existing.map((n) => ({
+    x: n.position.x,
+    y: n.position.y,
+    // React Flow reports measured width/height once a node is on screen; before
+    // that they're undefined, so fall back to the default footprint.
+    w: n.width ?? NODE_W,
+    h: n.height ?? NODE_H,
+  }));
+  // Slots already handed out this tick but not yet rendered count as occupied.
+  for (const p of pending) boxes.push({ x: p.x, y: p.y, w: NODE_W, h: NODE_H });
+
+  // Anchor: just below the lowest existing node (so new nodes stack downward
+  // into open space), or a sensible default on an empty canvas.
+  let anchorX = 120;
+  let anchorY = 100;
+  if (boxes.length > 0) {
+    const minX = Math.min(...boxes.map((b) => b.x));
+    const maxY = Math.max(...boxes.map((b) => b.y + b.h));
+    anchorX = minX;
+    anchorY = maxY + PLACE_GAP;
+  }
+
+  const fits = (x: number, y: number) => {
+    const candidate: Box = { x, y, w: NODE_W, h: NODE_H };
+    return !boxes.some((b) => boxesOverlap(candidate, b, PLACE_GAP));
+  };
+
+  if (fits(anchorX, anchorY)) return { x: anchorX, y: anchorY };
+
+  // Square-spiral search around the anchor: rings of increasing radius, probing
+  // grid points STEP apart, returning the first clear slot.
+  const STEP = NODE_W / 2 + PLACE_GAP; // ~121px — half a node per ring
+  for (let ring = 1; ring <= 40; ring++) {
+    for (let dx = -ring; dx <= ring; dx++) {
+      for (let dy = -ring; dy <= ring; dy++) {
+        // Only probe the perimeter of the current ring (interior already tried).
+        if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+        const x = anchorX + dx * STEP;
+        const y = anchorY + dy * STEP;
+        if (fits(x, y)) return { x, y };
+      }
+    }
+  }
+  // Fallback (canvas absurdly dense): drop far below everything.
+  return { x: anchorX, y: anchorY + 41 * STEP };
+}
+
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
@@ -84,6 +166,20 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [isMobile, setIsMobile] = useState(false);
 
   const [editingNode, setEditingNode] = useState<ApiNode | null>(null);
+  // IDs of nodes created in this session that haven't been "settled" yet. While
+  // an id is in this set, its FlowNode renders a vermilion pulse border so the
+  // user can spot what they just added. An id leaves the set after a timeout or
+  // once the user opens its edit modal (whichever comes first).
+  const [newlyCreatedNodeIds, setNewlyCreatedNodeIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const newTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+  // Positions handed out by addNode that haven't yet landed in rfNodes (React
+  // state flushes async). Rapid Add-node clicks read this so two new nodes in
+  // the same tick don't compute the same slot and stack on top of each other.
+  const pendingPlacementsRef = useRef<Array<{ x: number; y: number }>>([]);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ApiNode | null>(null);
   const [executing, setExecuting] = useState(false);
@@ -167,15 +263,63 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     void loadData();
   }, [loadData]);
 
+  // ---- "Newly created" highlight bookkeeping ----
+  // Remove a node id from the highlight set and cancel its pending timer.
+  const settleNewNode = useCallback((nodeId: string) => {
+    const t = newTimersRef.current.get(nodeId);
+    if (t) {
+      clearTimeout(t);
+      newTimersRef.current.delete(nodeId);
+    }
+    setNewlyCreatedNodeIds((prev) => {
+      if (!prev.has(nodeId)) return prev;
+      const next = new Set(prev);
+      next.delete(nodeId);
+      return next;
+    });
+  }, []);
+
+  // Mark a node id as newly created and schedule it to settle after 3s.
+  const markNewNode = useCallback(
+    (nodeId: string) => {
+      setNewlyCreatedNodeIds((prev) => {
+        const next = new Set(prev);
+        next.add(nodeId);
+        return next;
+      });
+      const t = setTimeout(() => settleNewNode(nodeId), 3000);
+      newTimersRef.current.set(nodeId, t);
+    },
+    [settleNewNode],
+  );
+
+  // Clear any outstanding highlight timers on unmount.
+  useEffect(() => {
+    const timers = newTimersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
   // ---- Node CRUD ----
   const addNode = async () => {
+    // Place into empty space, accounting for nodes already on the canvas AND any
+    // slots handed out earlier this tick that haven't rendered yet.
+    const pos = findEmptyPosition(rfNodesRef.current, pendingPlacementsRef.current);
+    pendingPlacementsRef.current.push(pos);
     const newNode = {
       type: 'function',
       name: 'New Node',
       description: '',
-      positionX: 120 + Math.random() * 240,
-      positionY: 80 + Math.random() * 200,
+      positionX: pos.x,
+      positionY: pos.y,
       config: {},
+    };
+    const clearPending = () => {
+      pendingPlacementsRef.current = pendingPlacementsRef.current.filter(
+        (p) => p !== pos,
+      );
     };
     try {
       const res = await fetch(`/api/projects/${id}/nodes`, {
@@ -186,9 +330,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       if (res.ok) {
         const created: ApiNode = await res.json();
         setNodes((prev) => [...prev, created]);
+        markNewNode(created.id);
+        // The node is now in rfNodes; stop double-counting its reserved slot.
+        clearPending();
         toast.success('Node added');
-      } else toast.error('Failed to add node');
+      } else {
+        clearPending();
+        toast.error('Failed to add node');
+      }
     } catch {
+      clearPending();
       toast.error('Network error');
     }
   };
@@ -870,10 +1021,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         description: n.description,
         config: n.config as Record<string, any> | undefined,
         executing: runningNodeId === n.id,
+        // Vermilion pulse border until this freshly-created node settles.
+        isNew: newlyCreatedNodeIds.has(n.id),
         looping,
         loopRound: loopState[n.id]?.round,
         loopTotal: loopState[n.id]?.total,
-        onEdit: (nid: string) => setEditingNode(nodesRef.current.find((x) => x.id === nid) ?? null),
+        onEdit: (nid: string) => {
+          // Opening the editor counts as acknowledging the node — settle it now.
+          settleNewNode(nid);
+          setEditingNode(nodesRef.current.find((x) => x.id === nid) ?? null);
+        },
         onDelete: (nid: string) =>
           setDeleteTarget(nodesRef.current.find((x) => x.id === nid) ?? null),
         // When loop mode is enabled, the Run button kicks off the loop instead of
@@ -883,7 +1040,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         onStopLoop: (nid: string) => stopLoopRef.current(nid),
       };
     },
-    [runningNodeId, loopState],
+    [runningNodeId, loopState, newlyCreatedNodeIds, settleNewNode],
   );
 
   // Reconcile RFNode[] with the source-of-truth ApiNode[] WITHOUT discarding the
