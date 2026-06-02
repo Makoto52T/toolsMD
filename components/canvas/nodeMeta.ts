@@ -6,6 +6,7 @@ export const NODE_TYPES = [
   'puppeteer',
   'sub-project',
   'server',
+  'env',
 ] as const;
 export type NodeTypeName = (typeof NODE_TYPES)[number];
 
@@ -20,6 +21,9 @@ export const NODE_META: Record<
   // Default server meta — refined per-config by metaForServer (icon/color vary
   // by category + language).
   server: { icon: '🖥️', label: 'Server', color: '#0d9488' },
+  // Environment variables store (frontend/backend/both). Slate to read as
+  // "config / infra" rather than an executable step.
+  env: { icon: '⚙️', label: 'Env Vars', color: '#475569' },
 };
 
 export function metaFor(type: string) {

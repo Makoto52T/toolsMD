@@ -694,6 +694,30 @@ export async function executeNode(
         }
       }
 
+      case 'env': {
+        // An env node holds a list of { key, value, secret } variables for a
+        // frontend/backend target. "Executing" it resolves each value (with
+        // {{tag}} interpolation, same as http nodes) into a flat object
+        // { KEY: value } so the result can drive output bindings / be inspected.
+        // secret only masks the value in the UI — the resolved output still
+        // carries the real value so downstream bindings work.
+        const rawVars = node.config?.vars;
+        const list = Array.isArray(rawVars) ? rawVars : [];
+        const output: Record<string, string> = {};
+        for (const v of list) {
+          if (!v || typeof v !== 'object') continue;
+          const key = String((v as any).key ?? '').trim();
+          if (!key) continue;
+          const rawVal = (v as any).value;
+          const value =
+            typeof rawVal === 'string'
+              ? interpolateTags(rawVal, tags).result
+              : String(rawVal ?? '');
+          output[key] = value;
+        }
+        return { nodeId: node.id, status: 'success', output };
+      }
+
       case 'sub-project': {
         // Reference to another project (placeholder)
         return { nodeId: node.id, status: 'success', output: { type: 'sub-project', reference: node.config.projectId } };

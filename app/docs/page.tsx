@@ -19,6 +19,7 @@ const SECTIONS: Section[] = [
   { id: 'tags', title: 'Tags System', icon: '🏷️' },
   { id: 'http', title: 'HTTP Request', icon: '⚡' },
   { id: 'server', title: 'Server Node', icon: '🖥️' },
+  { id: 'env', title: 'Env Node', icon: '⚙️' },
   { id: 'execution', title: 'Execution', icon: '▶️' },
   { id: 'loop', title: 'Loop Mode', icon: '🔁' },
   { id: 'templates', title: 'Templates', icon: '📋' },
@@ -128,6 +129,13 @@ return items.filter(x => x.active);`}</Block>
         config and output bindings but returns a canned result in this environment.
       </P>
 
+      <H3>⚙️ Env Vars</H3>
+      <P>
+        Holds a list of environment variables (<Code>KEY=value</Code>) targeted at the{' '}
+        <strong>frontend</strong>, <strong>backend</strong>, or both. Mark a value{' '}
+        <strong>secret</strong> to mask it in the UI. See <strong>Env Node</strong> below.
+      </P>
+
       <H3>📦 Sub-project</H3>
       <P>References another project as a reusable building block inside the current flow.</P>
     </section>
@@ -218,6 +226,45 @@ POST /login  -> 200 { "token": "mock-jwt-..." }`}</Block>
       <P>
         Running a server node probes its host/port and reports reachability + timing, so you can confirm a
         dependency is up as part of the chain.
+      </P>
+    </section>
+  );
+}
+
+function Env() {
+  return (
+    <section>
+      <H2 id="env" icon="⚙️">Env Node</H2>
+      <P>
+        An env node is a typed store of environment variables for your stack. Pick whether they belong to the{' '}
+        <strong>frontend</strong>, <strong>backend</strong>, or <strong>both</strong>, then add{' '}
+        <Code>KEY=value</Code> rows. It documents the config a service needs in one place on the canvas.
+      </P>
+      <Block>{`PORT=3000
+DATABASE_URL=mysql://{{domain}}/db   # secret
+NODE_ENV=production`}</Block>
+      <H3>Secret values</H3>
+      <P>
+        Tick <strong>secret</strong> on a row to mask its value (<Code>••••••</Code>) in the node, the list, and
+        the editor. Masking is display-only — running the node still resolves the real value so downstream
+        bindings keep working.
+      </P>
+      <H3>Tag interpolation</H3>
+      <P>
+        Values support <Code>{'{{tag}}'}</Code> placeholders, resolved with the same engine as HTTP nodes. So{' '}
+        <Code>mysql://{'{{domain}}'}/db</Code> picks up the live <Code>domain</Code> tag at run time.
+      </P>
+      <H3>Running it</H3>
+      <P>
+        Executing an env node resolves every value and returns a flat{' '}
+        <Code>{'{ KEY: value }'}</Code> object. Bind any key to a tag (via the output panel) to feed it into
+        later steps in the chain.
+      </P>
+      <H3>Import .env</H3>
+      <P>
+        Use <strong>Import .env</strong> to paste a whole <Code>.env</Code> file at once — it parses{' '}
+        <Code>KEY=value</Code> lines (honouring <Code>export</Code>, <Code>#</Code> comments, and quotes) and
+        merges them into the table.
       </P>
     </section>
   );
@@ -439,6 +486,7 @@ const BODIES: Record<string, () => React.JSX.Element> = {
   tags: Tags,
   http: Http,
   server: Server,
+  env: Env,
   execution: Execution,
   loop: LoopMode,
   templates: Templates,

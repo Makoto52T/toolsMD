@@ -26,7 +26,16 @@ export interface FlowNodeData {
 function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   const meta = nodeDisplayMeta(data.type, data.config);
   const isServer = data.type === 'server';
+  const isEnv = data.type === 'env';
   const cfg = data.config ?? {};
+  // Env node: target (frontend/backend/both) + the variable list.
+  const envTarget: string = isEnv
+    ? cfg.envTarget === 'frontend' || cfg.envTarget === 'backend'
+      ? cfg.envTarget
+      : 'both'
+    : '';
+  const envVars: Array<{ key: string; value: string; secret?: boolean }> =
+    isEnv && Array.isArray(cfg.vars) ? cfg.vars : [];
   const framework: string = isServer ? String(cfg.framework ?? '') : '';
   const port = isServer && cfg.port != null && cfg.port !== '' ? String(cfg.port) : '';
   const routeCount =
@@ -131,6 +140,48 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             >
               📡 {eventCount} event{eventCount === 1 ? '' : 's'}
             </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isEnv ? (
+        <div className="px-3 pt-2">
+          <div className="mb-1 flex items-center gap-1">
+            <span
+              data-testid="env-target-badge"
+              className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+              style={{ background: meta.color }}
+            >
+              {envTarget === 'both'
+                ? 'Frontend + Backend'
+                : envTarget === 'frontend'
+                  ? 'Frontend'
+                  : 'Backend'}
+            </span>
+            <span className="rounded-md bg-[var(--color-neutral-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-neutral-600)]">
+              {envVars.length} variable{envVars.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          {envVars.length > 0 ? (
+            <div
+              data-testid="env-var-list"
+              className="rounded-md bg-[var(--color-neutral-900)] px-2 py-1.5 font-mono text-[9px] leading-relaxed text-[var(--color-neutral-100)]"
+            >
+              {envVars.slice(0, 5).map((v, i) => (
+                <div key={i} className="truncate">
+                  <span className="text-[var(--color-info)]">{v.key || '—'}</span>
+                  <span className="text-[var(--color-neutral-500)]">=</span>
+                  <span className="text-[var(--color-neutral-300)]">
+                    {v.secret ? '••••••' : v.value || ''}
+                  </span>
+                </div>
+              ))}
+              {envVars.length > 5 ? (
+                <div className="text-[var(--color-neutral-500)]">
+                  +{envVars.length - 5} more…
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

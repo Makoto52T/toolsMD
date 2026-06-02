@@ -1346,6 +1346,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               <ServerNodeFields node={editingNode} tags={tags} onChange={setEditingNode} />
             )}
 
+            {editingNode.type === 'env' && (
+              <EnvNodeFields node={editingNode} onChange={setEditingNode} />
+            )}
+
             <LoopNodeFields node={editingNode} onChange={setEditingNode} />
           </div>
         )}
@@ -1666,6 +1670,247 @@ function LoopNodeFields({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------- Env node config fields (Edit Node modal) ----------
+// An env node stores a list of { key, value, secret } variables targeted at the
+// frontend, backend, or both. Values support {{tag}} interpolation at run time
+// (same engine as http nodes). `secret` only masks the value in the UI; the
+// resolved output still carries the real value so downstream bindings work.
+interface EnvVar {
+  key: string;
+  value: string;
+  secret: boolean;
+}
+
+function readEnvVars(cfg: Record<string, any>): EnvVar[] {
+  const raw = cfg.vars;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((v) => ({
+    key: String(v?.key ?? ''),
+    value: String(v?.value ?? ''),
+    secret: v?.secret === true,
+  }));
+}
+
+// Parse pasted .env text into rows. Honours `export KEY=val`, `#` comments,
+// blank lines, quoted values, and inline `KEY=` with empty value. Keeps it
+// permissive — anything without an `=` is skipped rather than erroring.
+function parseDotenv(text: string): EnvVar[] {
+  const out: EnvVar[] = [];
+  for (const lineRaw of text.split(/\r?\n/)) {
+    const line = lineRaw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const stripped = line.replace(/^export\s+/, '');
+    const eq = stripped.indexOf('=');
+    if (eq === -1) continue;
+    const key = stripped.slice(0, eq).trim();
+    if (!key) continue;
+    let value = stripped.slice(eq + 1).trim();
+    // Unwrap a single layer of matching quotes.
+    if (
+      (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+      (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+    ) {
+      value = value.slice(1, -1);
+    }
+    out.push({ key, value, secret: false });
+  }
+  return out;
+}
+
+function EnvNodeFields({
+  node,
+  onChange,
+}: {
+  node: ApiNode;
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  const envTarget: 'frontend' | 'backend' | 'both' =
+    cfg.envTarget === 'frontend' || cfg.envTarget === 'backend'
+      ? cfg.envTarget
+      : 'both';
+  const vars = readEnvVars(cfg);
+
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+
+  const setVars = (next: EnvVar[]) =>
+    onChange({ ...node, config: { ...cfg, vars: next } });
+  const setTarget = (t: 'frontend' | 'backend' | 'both') =>
+    onChange({ ...node, config: { ...cfg, envTarget: t } });
+
+  const updateRow = (i: number, patch: Partial<EnvVar>) =>
+    setVars(vars.map((v, idx) => (idx === i ? { ...v, ...patch } : v)));
+  const addRow = () => setVars([...vars, { key: '', value: '', secret: false }]);
+  const removeRow = (i: number) => setVars(vars.filter((_, idx) => idx !== i));
+
+  const doImport = () => {
+    const parsed = parseDotenv(importText);
+    if (parsed.length === 0) {
+      setShowImport(false);
+      setImportText('');
+      return;
+    }
+    // Merge: imported keys overwrite existing same-key rows, new keys appended.
+    const byKey = new Map(vars.map((v) => [v.key, v] as const));
+    for (const p of parsed) byKey.set(p.key, { ...byKey.get(p.key), ...p });
+    setVars(Array.from(byKey.values()));
+    setShowImport(false);
+    setImportText('');
+  };
+
+  return (
+    <div
+      data-testid="env-fields"
+      className="flex flex-col gap-4 rounded-xl border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] p-4"
+    >
+      {/* Target toggle */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-[var(--color-neutral-700)]">
+          Used by
+        </label>
+        <div className="flex gap-2">
+          {(['frontend', 'backend', 'both'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              data-testid={`env-target-${t}`}
+              onClick={() => setTarget(t)}
+              className={[
+                'flex-1 rounded-lg border px-3 py-2 text-sm font-medium capitalize transition-colors',
+                envTarget === t
+                  ? 'border-transparent text-white'
+                  : 'border-[var(--color-neutral-300)] bg-white text-[var(--color-neutral-700)]',
+              ].join(' ')}
+              style={envTarget === t ? { background: '#475569' } : undefined}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Variables table */}
+      <div>
+        <div className="mb-1.5 flex items-center justify-between">
+          <label className="block text-sm font-medium text-[var(--color-neutral-700)]">
+            Variables
+          </label>
+          <button
+            type="button"
+            data-testid="env-import-toggle"
+            onClick={() => setShowImport((s) => !s)}
+            className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/10"
+          >
+            Import .env
+          </button>
+        </div>
+
+        {showImport ? (
+          <div className="mb-2 rounded-lg border border-[var(--color-neutral-200)] bg-white p-2">
+            <textarea
+              data-testid="env-import-text"
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              rows={4}
+              placeholder={'PORT=3000\nDATABASE_URL="mysql://..."\n# comments ignored'}
+              className="w-full rounded-md border border-[var(--color-neutral-300)] px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+            />
+            <div className="mt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowImport(false);
+                  setImportText('');
+                }}
+                className="rounded-md px-2.5 py-1 text-xs font-medium text-[var(--color-neutral-600)] hover:bg-[var(--color-neutral-100)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-testid="env-import-apply"
+                onClick={doImport}
+                className="rounded-md bg-[var(--color-primary)] px-2.5 py-1 text-xs font-semibold text-white hover:opacity-90"
+              >
+                Parse &amp; add
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {vars.length > 0 ? (
+          <div className="flex flex-col gap-1.5" data-testid="env-var-rows">
+            {vars.map((v, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  data-testid={`env-key-${i}`}
+                  value={v.key}
+                  onChange={(e) => updateRow(i, { key: e.target.value })}
+                  placeholder="KEY"
+                  className="w-2/5 rounded-md border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+                />
+                <input
+                  type={v.secret ? 'password' : 'text'}
+                  data-testid={`env-value-${i}`}
+                  value={v.value}
+                  onChange={(e) => updateRow(i, { value: e.target.value })}
+                  placeholder="value or {{tag}}"
+                  className="flex-1 rounded-md border border-[var(--color-neutral-300)] bg-white px-2 py-1.5 font-mono text-xs focus:border-[var(--color-primary)] focus:outline-none"
+                />
+                <label
+                  className="flex shrink-0 cursor-pointer items-center gap-1 text-[10px] font-medium text-[var(--color-neutral-600)]"
+                  title="Mask this value in the UI"
+                >
+                  <input
+                    type="checkbox"
+                    data-testid={`env-secret-${i}`}
+                    checked={v.secret}
+                    onChange={(e) => updateRow(i, { secret: e.target.checked })}
+                    className="h-3.5 w-3.5 accent-[var(--color-primary)]"
+                  />
+                  secret
+                </label>
+                <button
+                  type="button"
+                  data-testid={`env-remove-${i}`}
+                  onClick={() => removeRow(i)}
+                  aria-label="Remove variable"
+                  className="shrink-0 rounded-md p-1.5 text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger)]/10"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6L6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="rounded-md border border-dashed border-[var(--color-neutral-300)] px-3 py-3 text-center text-xs text-[var(--color-neutral-400)]">
+            No variables yet. Add one or import a .env file.
+          </p>
+        )}
+
+        <button
+          type="button"
+          data-testid="env-add-var"
+          onClick={addRow}
+          className="mt-2 w-full rounded-lg border border-dashed border-[var(--color-neutral-300)] py-2 text-xs font-medium text-[var(--color-neutral-600)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+        >
+          + Add Variable
+        </button>
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-[var(--color-neutral-400)]">
+        Values support <span className="font-mono">{'{{tag}}'}</span> interpolation. Running this
+        node resolves every value into a <span className="font-mono">{'{ KEY: value }'}</span>{' '}
+        object you can bind to tags. <strong>Secret</strong> only masks the value in the UI.
+      </p>
     </div>
   );
 }
@@ -3716,6 +3961,14 @@ function MobileNodeList({
             n.type === 'server' && sCfg.port != null && sCfg.port !== ''
               ? String(sCfg.port)
               : '';
+          const isEnv = n.type === 'env';
+          const envTarget = isEnv
+            ? sCfg.envTarget === 'frontend' || sCfg.envTarget === 'backend'
+              ? (sCfg.envTarget as string)
+              : 'both'
+            : '';
+          const envVarCount =
+            isEnv && Array.isArray(sCfg.vars) ? sCfg.vars.length : 0;
           return (
             <div
               key={n.id}
@@ -3749,6 +4002,24 @@ function MobileNodeList({
                       :{sPort}
                     </span>
                   ) : null}
+                </div>
+              ) : null}
+
+              {isEnv ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                  <span
+                    className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white"
+                    style={{ background: meta.color }}
+                  >
+                    {envTarget === 'both'
+                      ? 'Frontend + Backend'
+                      : envTarget === 'frontend'
+                        ? 'Frontend'
+                        : 'Backend'}
+                  </span>
+                  <span className="rounded-md bg-[var(--color-neutral-100)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-neutral-600)]">
+                    {envVarCount} variable{envVarCount === 1 ? '' : 's'}
+                  </span>
                 </div>
               ) : null}
 
