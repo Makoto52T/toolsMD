@@ -22,6 +22,7 @@ const SECTIONS: Section[] = [
   { id: 'loop', title: 'Loop Mode', icon: '🔁' },
   { id: 'templates', title: 'Templates', icon: '📋' },
   { id: 'wiki-ingest', title: 'Wiki Ingest', icon: '📥' },
+  { id: 'mobile', title: 'Mobile', icon: '📱' },
   { id: 'tips', title: 'Tips', icon: '💡' },
 ];
 
@@ -379,6 +380,35 @@ function WikiIngest() {
   );
 }
 
+function Mobile() {
+  return (
+    <section>
+      <H2 id="mobile" icon="📱">Mobile</H2>
+      <P>
+        On a phone the editor splits into a single full-width pane driven by a bottom tab bar, so you
+        get the same capabilities as desktop without fighting a three-column layout on a small screen.
+      </P>
+      <H3>Bottom tabs</H3>
+      <UL>
+        <li><strong>🗺️ Canvas</strong> — the real flow canvas. Pinch to zoom, drag a node to move it,
+          and drag from a node handle to another to draw an edge. Positions and edges persist exactly
+          like on desktop.</li>
+        <li><strong>📋 List</strong> — a touch-first editor: each node is a card with large Run / Edit /
+          Link / Del buttons. Tap <strong>Link</strong> then a target card to connect two nodes without
+          drawing an edge by hand.</li>
+        <li><strong>📤 Output</strong> — execution results render here inline. Running a node or the whole
+          workflow jumps you to this tab automatically; a dot on the tab marks fresh results.</li>
+      </UL>
+      <H3>Tags &amp; editing</H3>
+      <P>
+        The <strong>🏷️ Tags</strong> panel opens as a full-screen overlay from the launcher on the left
+        edge — reachable from any tab. Editing a node opens a full-width bottom sheet with the same Name /
+        Type / HTTP tabs (Request, Headers, Body, Preview, Output) as desktop.
+      </P>
+    </section>
+  );
+}
+
 function Tips() {
   return (
     <section>
@@ -412,6 +442,7 @@ const BODIES: Record<string, () => React.JSX.Element> = {
   loop: LoopMode,
   templates: Templates,
   'wiki-ingest': WikiIngest,
+  mobile: Mobile,
   tips: Tips,
 };
 

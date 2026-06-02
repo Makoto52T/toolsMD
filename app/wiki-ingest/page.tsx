@@ -246,31 +246,36 @@ export default function WikiIngestPage() {
               />
             </div>
 
-            {/* Option toggles */}
-            <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] p-3">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-neutral-700)]">
+            {/* Option toggles — each row is a ≥44px tap target. */}
+            <div className="flex flex-col gap-1 rounded-lg border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] p-2">
+              <label className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-md px-2 text-sm text-[var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]">
                 <input
                   type="checkbox"
                   checked={webSearch}
                   onChange={(e) => setWebSearch(e.target.checked)}
-                  className="h-4 w-4 accent-[var(--color-primary)]"
+                  className="h-5 w-5 accent-[var(--color-primary)]"
                 />
                 🔍 ค้นหาข้อมูลเพิ่มจาก internet
               </label>
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-neutral-700)]">
+              <label className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-md px-2 text-sm text-[var(--color-neutral-700)] hover:bg-[var(--color-neutral-100)]">
                 <input
                   type="checkbox"
                   checked={autoProject}
                   onChange={(e) => setAutoProject(e.target.checked)}
-                  className="h-4 w-4 accent-[var(--color-primary)]"
+                  className="h-5 w-5 accent-[var(--color-primary)]"
                 />
                 📊 สร้าง TMD Project อัตโนมัติ
               </label>
             </div>
 
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col-reverse items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
               <StatusBadge status={status} />
-              <Button onClick={handleProcess} disabled={processing} loading={processing}>
+              <Button
+                onClick={handleProcess}
+                disabled={processing}
+                loading={processing}
+                className="w-full sm:w-auto"
+              >
                 {processing ? 'Processing…' : 'Process & Save'}
               </Button>
             </div>

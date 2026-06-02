@@ -106,6 +106,10 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   >({});
   // Desktop output column collapse (default expanded).
   const [outputCollapsed, setOutputCollapsed] = useState(false);
+  // Mobile: which view the bottom tab bar is showing. The real React Flow
+  // canvas is the default (touch supports pinch-zoom + drag). "list" is the
+  // touch-friendly node/edge editor; "output" hosts execution results inline.
+  const [mobileTab, setMobileTab] = useState<'canvas' | 'list' | 'output'>('canvas');
 
   // Load-from-template modal: append a template's nodes/edges/tags onto this canvas.
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
@@ -127,6 +131,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   useEffect(() => {
     if (execPanel !== null) setOutputCollapsed(false);
   }, [execPanel]);
+
+  // Mobile: when a result arrives, jump to the Output tab so a run on the
+  // Canvas or List tab doesn't silently drop the result off-screen.
+  useEffect(() => {
+    if (execPanel !== null && isMobile) setMobileTab('output');
+  }, [execPanel, isMobile]);
 
   const loadData = useCallback(async () => {
     try {
@@ -1011,124 +1021,245 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             ) : null}
           </div>
         </div>
+        {/* Action buttons. On mobile they are full md-size (≥44px touch target)
+            with condensed labels; on desktop they pack tighter as sm. */}
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={addNode} leftIcon={<span className="leading-none">+</span>}>
-            Add Node
-          </Button>
-          <Button size="sm" variant="secondary" onClick={openTemplatePicker}>
-            📋 Load from template
+          <Button
+            size={isMobile ? 'md' : 'sm'}
+            onClick={addNode}
+            leftIcon={<span className="leading-none">+</span>}
+          >
+            <span className="sm:hidden">Add</span>
+            <span className="hidden sm:inline">Add Node</span>
           </Button>
           <Button
-            size="sm"
+            size={isMobile ? 'md' : 'sm'}
+            variant="secondary"
+            onClick={openTemplatePicker}
+          >
+            <span aria-hidden>📋</span>
+            <span className="hidden sm:inline"> Load from template</span>
+          </Button>
+          <Button
+            size={isMobile ? 'md' : 'sm'}
             variant="success"
             onClick={() => window.open(`/api/projects/${id}/export`, '_blank')}
           >
-            📄 Export
+            <span aria-hidden>📄</span>
+            <span className="hidden sm:inline"> Export</span>
           </Button>
-          <Button size="sm" variant="primary" onClick={execute} loading={executing}>
-            ▶️ Execute
+          <Button
+            size={isMobile ? 'md' : 'sm'}
+            variant="primary"
+            onClick={execute}
+            loading={executing}
+          >
+            <span aria-hidden>▶️</span>
+            <span className="hidden sm:inline"> Execute</span>
           </Button>
         </div>
       </div>
 
-      {/* 3-panel layout: [Tags left · pinned] [Canvas center · flex-1] [Output right · pinned].
-          On mobile both side panels collapse to overlays (User Rule #4). */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Desktop: pinned left tags column. */}
-        {!isMobile && (
-          <TagsPanel
-            tags={tags}
-            isMobile={false}
-            onChange={onTagsChange}
-            autoInfo={tagAutoInfo}
-          />
-        )}
-
-        {/* Canvas / Mobile list */}
-        <div className="relative flex-1 overflow-hidden bg-white">
-          {isMobile ? (
-            <MobileNodeList
-              nodes={nodes}
-              edges={edges}
-              onEdit={(n) => setEditingNode(n)}
-              onDelete={(n) => setDeleteTarget(n)}
-              onConnect={createEdge}
-              onDeleteEdge={deleteEdge}
-              onExecute={(n) => executeOne(n.id)}
-              runningNodeId={runningNodeId}
+      {/* Body. Desktop: a pinned 3-panel layout
+          [Tags · pinned] [Canvas · flex-1] [Output · pinned].
+          Mobile: a single full-width pane driven by a bottom tab bar
+          (Canvas / List / Output) plus the Tags overlay (User Rule #4). */}
+      {(() => {
+        // The real React Flow canvas — shared by desktop and the mobile
+        // "Canvas" tab. Touch supports pinch-zoom and node drag natively
+        // (reactflow v11). `touch-none` lets the canvas own touch gestures so
+        // the page doesn't scroll-hijack a pan/zoom.
+        const canvas = (
+          <ReactFlow
+            nodes={rfNodes}
+            edges={rfEdges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            connectionMode={ConnectionMode.Loose}
+            onNodesChange={onNodesChange}
+            onConnect={onConnect}
+            onEdgesDelete={onEdgesDelete}
+            onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
+            onEdgeMouseLeave={() => setHoveredEdgeId(null)}
+            fitView
+            minZoom={0.2}
+            maxZoom={2}
+            proOptions={{ hideAttribution: true }}
+            deleteKeyCode={['Backspace', 'Delete']}
+            // Shift+drag = rubber-band select; plain drag = pan canvas.
+            selectionKeyCode="Shift"
+            // Partial: a node only needs to be partly inside the box to select.
+            selectionMode={SelectionMode.Partial}
+            // Shift+Click or Cmd+Click adds/removes a node from the selection.
+            multiSelectionKeyCode={['Shift', 'Meta']}
+            className="touch-none"
+          >
+            <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd5e1" />
+            <Controls showInteractive={false} />
+            <MiniMap
+              pannable
+              zoomable
+              nodeColor={(n) => metaFor((n.data as FlowNodeData)?.type ?? '').color}
+              maskColor="rgba(148, 163, 184, 0.25)"
+              style={{ backgroundColor: 'var(--color-neutral-100)' }}
+              className="!hidden sm:!block !border !border-[color:var(--color-neutral-300)] !rounded-[var(--radius-card)] !shadow-[var(--shadow-card)]"
             />
-          ) : (
-            <ReactFlow
-              nodes={rfNodes}
-              edges={rfEdges}
-              nodeTypes={nodeTypes}
-              edgeTypes={edgeTypes}
-              connectionMode={ConnectionMode.Loose}
-              onNodesChange={onNodesChange}
-              onConnect={onConnect}
-              onEdgesDelete={onEdgesDelete}
-              onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
-              onEdgeMouseLeave={() => setHoveredEdgeId(null)}
-              fitView
-              minZoom={0.2}
-              maxZoom={2}
-              proOptions={{ hideAttribution: true }}
-              deleteKeyCode={['Backspace', 'Delete']}
-              // Shift+drag = rubber-band select; plain drag = pan canvas.
-              selectionKeyCode="Shift"
-              // Partial: a node only needs to be partly inside the box to select.
-              selectionMode={SelectionMode.Partial}
-              // Shift+Click or Cmd+Click adds/removes a node from the selection.
-              multiSelectionKeyCode={['Shift', 'Meta']}
-            >
-              <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cbd5e1" />
-              <Controls showInteractive={false} />
-              <MiniMap
-                pannable
-                zoomable
-                nodeColor={(n) => metaFor((n.data as FlowNodeData)?.type ?? '').color}
-                maskColor="rgba(148, 163, 184, 0.25)"
-                style={{ backgroundColor: 'var(--color-neutral-100)' }}
-                className="!hidden sm:!block !border !border-[color:var(--color-neutral-300)] !rounded-[var(--radius-card)] !shadow-[var(--shadow-card)]"
+          </ReactFlow>
+        );
+
+        const emptyOverlay = nodes.length === 0 && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            <div className="mb-3 text-4xl">🧩</div>
+            <p className="text-sm font-medium text-[var(--color-neutral-600)]">No nodes yet</p>
+            <p className="text-xs text-[var(--color-neutral-400)]">
+              Tap “Add” to start building your workflow.
+            </p>
+          </div>
+        );
+
+        if (!isMobile) {
+          return (
+            <div className="flex flex-1 overflow-hidden">
+              <TagsPanel
+                tags={tags}
+                isMobile={false}
+                onChange={onTagsChange}
+                autoInfo={tagAutoInfo}
               />
-            </ReactFlow>
-          )}
-
-          {nodes.length === 0 && (
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
-              <div className="mb-3 text-4xl">🧩</div>
-              <p className="text-sm font-medium text-[var(--color-neutral-600)]">No nodes yet</p>
-              <p className="text-xs text-[var(--color-neutral-400)]">
-                Click “Add Node” to start building your workflow.
-              </p>
+              <div className="relative flex-1 overflow-hidden bg-white">
+                {canvas}
+                {emptyOverlay}
+              </div>
+              <OutputColumn
+                collapsed={outputCollapsed}
+                onToggleCollapse={() => setOutputCollapsed((c) => !c)}
+                execPanel={execPanel}
+                onClear={() => setExecPanel(null)}
+                tags={tags}
+                bindingsByNode={bindingsByNode}
+                onBind={onBind}
+                onResolveMissing={onResolveMissing}
+              />
             </div>
-          )}
+          );
+        }
 
-          {/* Mobile: tags as a collapsible overlay inside the canvas region. */}
-          {isMobile && (
-            <TagsPanel
-              tags={tags}
-              isMobile
-              onChange={onTagsChange}
-              autoInfo={tagAutoInfo}
-            />
-          )}
-        </div>
+        // ---- Mobile: tabbed single-pane + bottom tab bar ----
+        return (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <div className="relative flex-1 overflow-hidden bg-white">
+              {/* Canvas tab — kept mounted (hidden, not unmounted) so React
+                  Flow keeps its measured node dimensions + viewport across
+                  tab switches. */}
+              <div
+                className={`absolute inset-0 ${mobileTab === 'canvas' ? '' : 'hidden'}`}
+                data-testid="mobile-canvas"
+              >
+                {canvas}
+                {emptyOverlay}
+              </div>
 
-        {/* Desktop: pinned right output column (collapsible). */}
-        {!isMobile && (
-          <OutputColumn
-            collapsed={outputCollapsed}
-            onToggleCollapse={() => setOutputCollapsed((c) => !c)}
-            execPanel={execPanel}
-            onClear={() => setExecPanel(null)}
-            tags={tags}
-            bindingsByNode={bindingsByNode}
-            onBind={onBind}
-            onResolveMissing={onResolveMissing}
-          />
-        )}
-      </div>
+              {mobileTab === 'list' && (
+                <div className="absolute inset-0" data-testid="mobile-list">
+                  <MobileNodeList
+                    nodes={nodes}
+                    edges={edges}
+                    onEdit={(n) => setEditingNode(n)}
+                    onDelete={(n) => setDeleteTarget(n)}
+                    onConnect={createEdge}
+                    onDeleteEdge={deleteEdge}
+                    onExecute={(n) => executeOne(n.id)}
+                    runningNodeId={runningNodeId}
+                  />
+                </div>
+              )}
+
+              {mobileTab === 'output' && (
+                <div
+                  className="absolute inset-0 overflow-y-auto bg-[var(--color-neutral-50)]"
+                  data-testid="mobile-output"
+                >
+                  {execPanel ? (
+                    <div className="p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <h2 className="text-sm font-bold text-[var(--color-neutral-900)]">
+                          Result · {execPanel.title}
+                        </h2>
+                        <Button size="sm" variant="ghost" onClick={() => setExecPanel(null)}>
+                          Clear
+                        </Button>
+                      </div>
+                      <ExecutionResultPanel
+                        results={execPanel.results}
+                        tags={tags}
+                        bindingsByNode={bindingsByNode}
+                        missingBindings={execPanel.missingBindings}
+                        onBind={onBind}
+                        onResolveMissing={onResolveMissing}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                      <div className="mb-2 text-3xl">📤</div>
+                      <p className="text-sm font-medium text-[var(--color-neutral-600)]">
+                        No results yet
+                      </p>
+                      <p className="text-xs text-[var(--color-neutral-400)]">
+                        Run a node or Execute the workflow to see output here.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tags overlay — reachable from any tab via its edge launcher. */}
+              <TagsPanel
+                tags={tags}
+                isMobile
+                onChange={onTagsChange}
+                autoInfo={tagAutoInfo}
+              />
+            </div>
+
+            {/* Bottom tab bar — 3 equal targets, each ≥56px tall. */}
+            <nav
+              data-testid="mobile-tabbar"
+              className="grid shrink-0 grid-cols-3 border-t border-[var(--color-neutral-200)] bg-white"
+            >
+              {([
+                { key: 'canvas', icon: '🗺️', label: 'Canvas' },
+                { key: 'list', icon: '📋', label: 'List' },
+                { key: 'output', icon: '📤', label: 'Output' },
+              ] as const).map((t) => {
+                const active = mobileTab === t.key;
+                const showDot = t.key === 'output' && execPanel !== null && !active;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    data-testid={`mobile-tab-${t.key}`}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => setMobileTab(t.key)}
+                    className={`relative flex min-h-[56px] flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors ${
+                      active
+                        ? 'bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                        : 'text-[var(--color-neutral-500)]'
+                    }`}
+                  >
+                    <span className="text-lg leading-none" aria-hidden>
+                      {t.icon}
+                    </span>
+                    {t.label}
+                    {showDot ? (
+                      <span className="absolute right-[28%] top-2 h-2 w-2 rounded-full bg-[var(--color-primary)]" />
+                    ) : null}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        );
+      })()}
 
       {/* Edit Node modal — dismissable={false}: long config form, so it only
           closes via the X button or the Cancel action (not backdrop / Esc). */}
@@ -1268,32 +1399,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         )}
       </Modal>
 
-      {/* Execute result — desktop shows it in the pinned right OutputColumn.
-          On mobile only, it renders as a full-width bottom-sheet Modal. */}
-      {isMobile && (
-        <Modal
-          open={execPanel !== null}
-          onClose={() => setExecPanel(null)}
-          title={execPanel ? `Result · ${execPanel.title}` : 'Result'}
-          size="lg"
-          footer={
-            <div className="flex justify-end">
-              <Button variant="secondary" onClick={() => setExecPanel(null)}>
-                Close
-              </Button>
-            </div>
-          }
-        >
-          <ExecutionResultPanel
-            results={execPanel?.results ?? []}
-            tags={tags}
-            bindingsByNode={bindingsByNode}
-            missingBindings={execPanel?.missingBindings ?? []}
-            onBind={onBind}
-            onResolveMissing={onResolveMissing}
-          />
-        </Modal>
-      )}
+      {/* Execute result — desktop shows it in the pinned right OutputColumn;
+          mobile shows it in the dedicated "Output" bottom-tab pane (above).
+          No separate result modal here (single source of truth, User Rule #3). */}
 
       {/* Delete node confirm */}
       <ConfirmDialog
@@ -3568,7 +3676,8 @@ function MobileNodeList({
   return (
     <div className="h-full overflow-y-auto bg-[var(--color-neutral-50)] p-4">
       <div className="mb-3 rounded-lg bg-[var(--color-info)]/10 px-3 py-2 text-xs text-[var(--color-info)]">
-        Canvas drag isn’t available on small screens — use this list editor instead.
+        List editor — tap “Link” then a target to connect nodes. Prefer dragging? Use the
+        Canvas tab below (pinch to zoom, drag to move).
       </div>
 
       <div className="flex flex-col gap-3">
@@ -3642,41 +3751,40 @@ function MobileNodeList({
                 </div>
               )}
 
-              <div className="mt-3 flex gap-2">
+              {/* Touch-friendly action row: each button is md-size (≥44px). */}
+              <div className="mt-3 grid grid-cols-2 gap-2">
                 <Button
-                  size="sm"
+                  size="md"
                   variant="primary"
                   onClick={() => onExecute(n)}
                   loading={runningNodeId === n.id}
-                  className="flex-1"
                 >
                   {n.type === 'server' ? '▶ Ping' : '▶ Run'}
                 </Button>
-                <Button size="sm" variant="secondary" onClick={() => onEdit(n)} className="flex-1">
+                <Button size="md" variant="secondary" onClick={() => onEdit(n)}>
                   Edit
                 </Button>
                 {linkFrom?.id === n.id ? (
-                  <Button size="sm" variant="ghost" onClick={() => setLinkFrom(null)} className="flex-1">
+                  <Button size="md" variant="ghost" onClick={() => setLinkFrom(null)}>
                     Cancel
                   </Button>
                 ) : linkFrom ? (
                   <Button
-                    size="sm"
+                    size="md"
                     variant="primary"
                     onClick={() => {
                       onConnect(linkFrom.id, n.id);
                       setLinkFrom(null);
                     }}
-                    className="flex-1"
                   >
                     Connect here
                   </Button>
                 ) : (
-                  <Button size="sm" variant="secondary" onClick={() => setLinkFrom(n)} className="flex-1">
+                  <Button size="md" variant="secondary" onClick={() => setLinkFrom(n)}>
                     Link
                   </Button>
                 )}
-                <Button size="sm" variant="danger" onClick={() => onDelete(n)}>
+                <Button size="md" variant="danger" onClick={() => onDelete(n)}>
                   Del
                 </Button>
               </div>
