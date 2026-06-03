@@ -36,6 +36,12 @@ export default function TutorialPage() {
               Docs
             </Link>
             <Link
+              href="/wiki-graph"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
+            >
+              🕸️ Knowledge Graph
+            </Link>
+            <Link
               href="/dashboard"
               className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
             >
