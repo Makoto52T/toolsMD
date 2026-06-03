@@ -536,8 +536,36 @@ const runWorkflow: Chapter = {
   num: 9,
   icon: '▶️',
   title: 'Run Workflow',
-  blurb: 'one-click run, live status, data flow',
+  blurb: 'no-code: วาง → เชื่อม → Run → data flow',
   steps: [
+    {
+      label: 'วาง 3 nodes ลงบน canvas',
+      detail:
+        'No-code: ลาก node จาก palette มาวาง — Login (HTTP) → Parse (Function) → Get profile (HTTP). ยังไม่ต้องเขียนโค้ดเชื่อมข้อมูลเอง',
+      scene: {
+        nodes: [
+          { id: 'a', type: 'http-request', label: 'Login', subtitle: 'POST /login', x: 22, y: 30, glow: true },
+          { id: 'b', type: 'function', label: 'Parse', subtitle: 'extract token', x: 50, y: 50, glow: true },
+          { id: 'c', type: 'http-request', label: 'Get profile', subtitle: 'Bearer {{token}}', x: 78, y: 70, glow: true },
+        ],
+      },
+    },
+    {
+      label: 'ลากเส้นเชื่อม node ตามลำดับ',
+      detail:
+        'ลากจาก handle ของ node หนึ่งไปอีก node — Login → Parse → Get profile. label บนเส้น (เช่น "then") จะกลายเป็น key ใน inputs ของ node ปลายทาง',
+      scene: {
+        nodes: [
+          { id: 'a', type: 'http-request', label: 'Login', subtitle: 'POST /login', x: 22, y: 30 },
+          { id: 'b', type: 'function', label: 'Parse', subtitle: 'extract token', x: 50, y: 50 },
+          { id: 'c', type: 'http-request', label: 'Get profile', subtitle: 'Bearer {{token}}', x: 78, y: 70 },
+        ],
+        edges: [
+          { id: 'e1', from: 'a', to: 'b', label: 'then', draw: true },
+          { id: 'e2', from: 'b', to: 'c', label: 'then', draw: true },
+        ],
+      },
+    },
     {
       label: 'กด ▶ Run Flow ครั้งเดียว — รันทั้ง flow',
       detail:
@@ -574,11 +602,11 @@ const runWorkflow: Chapter = {
     {
       label: 'Output ของ node ก่อนหน้าไหลไป node ถัดไป',
       detail:
-        'auto data passing: node ถัดไปอ่าน output ของ upstream ได้ผ่าน inputs[edge label] — เช่น Function node เขียน const prev = inputs["then"] ไม่ต้อง copy ค่าด้วยมือ',
+        'auto data passing: Function node อ่าน output ของ upstream ได้ผ่าน inputs — key คือ label ของเส้น (inputs["then"]) หรือชื่อ node ต้นทาง (inputs["Login"]) ไม่ต้อง copy ค่าด้วยมือ',
       scene: {
         nodes: [
           { id: 'a', type: 'http-request', label: 'Login', subtitle: 'POST /login', x: 22, y: 30, badge: '✓ done' },
-          { id: 'b', type: 'function', label: 'Parse', subtitle: 'inputs["then"]', x: 50, y: 50, badge: '✓ done' },
+          { id: 'b', type: 'function', label: 'Parse', subtitle: 'inputs["Login"]', x: 50, y: 50, badge: '✓ done' },
           { id: 'c', type: 'http-request', label: 'Get profile', subtitle: 'Bearer {{token}}', x: 78, y: 70, badge: 'running…' },
         ],
         edges: [
@@ -608,6 +636,92 @@ const runWorkflow: Chapter = {
   ],
 };
 
+// ---- Ch.10 Script Loop -----------------------------------------------------
+// The forEach pattern: an env node holds an array, a loop node in *script* mode
+// iterates it, calling another node per item and collecting the results.
+const scriptLoop: Chapter = {
+  id: 'script-loop',
+  num: 10,
+  icon: '📜',
+  title: 'Script Loop',
+  blurb: 'forEach: env array → call ทีละตัว → collect',
+  steps: [
+    {
+      label: 'env node เก็บ array ที่จะวนซ้ำ',
+      detail:
+        'ตั้ง env var USERS=["alice","bob","carol"] บน env node แล้วต่อเส้นเข้า loop node — ค่าจะโผล่เป็น env.USERS ในสคริปต์',
+      scene: {
+        nodes: [
+          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40, glow: true },
+          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: '📜 script mode', x: 70, y: 56 },
+        ],
+        edges: [{ id: 'e', from: 'env', to: 'loop', label: 'env', draw: true }],
+      },
+    },
+    {
+      label: 'เปิด Script Mode บน loop node',
+      detail:
+        'ใน Loop section ติ๊ก 📜 Use Script Mode แล้วเลือก template "forEach + collect" — ได้โค้ดตัวอย่างพร้อมแก้',
+      scene: {
+        nodes: [
+          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40 },
+          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: '📜 script mode', x: 70, y: 56 },
+        ],
+        edges: [{ id: 'e', from: 'env', to: 'loop', label: 'env' }],
+        sheet: {
+          title: 'Each user · 📜 Script',
+          code:
+            'const users = env.USERS;        // ["alice","bob","carol"]\n' +
+            'const results = [];\n' +
+            'for (const user of users) {\n' +
+            "  const data = await call('HTTP Login', {\n" +
+            '    body: { username: user },\n' +
+            '  });\n' +
+            '  if (data.token) results.push({ user, token: data.token });\n' +
+            '}\n' +
+            'return results;                 // ส่งต่อ downstream',
+        },
+      },
+    },
+    {
+      label: 'await call() ยิง node อื่นทีละรอบ',
+      detail:
+        'call("HTTP Login", { body }) รัน node ชื่อนั้นจริง รอผล แล้วคืน output. สคริปต์คุม loop เอง รันครั้งเดียวบน server (badge 📜 script • running…)',
+      scene: {
+        nodes: [
+          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40 },
+          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: 'call → HTTP Login', x: 50, y: 50, badge: '📜 script • running…' },
+          { id: 'http', type: 'http-request', label: 'HTTP Login', subtitle: 'POST /login', x: 80, y: 66 },
+        ],
+        edges: [
+          { id: 'e', from: 'env', to: 'loop', label: 'env' },
+          { id: 'e2', from: 'loop', to: 'http', label: 'call', draw: true },
+        ],
+      },
+    },
+    {
+      label: 'return results → array 3 รายการ',
+      detail:
+        'สคริปต์ return results ค่าจะกลายเป็น output ของ node (เห็นใน panel + badge 📜 script · 3 calls). หรือใช้ await send("Next", data) แบบ fire-and-forget ไม่รอผลก็ได้',
+      scene: {
+        nodes: [
+          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40 },
+          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: '📜 script · 3 calls', x: 70, y: 56, badge: '✓ done' },
+        ],
+        edges: [{ id: 'e', from: 'env', to: 'loop', label: 'env' }],
+        output: {
+          status: 200,
+          statusText: 'OK',
+          ms: 642,
+          slideIn: true,
+          body:
+            '[\n  { "user": "alice", "token": "a1b2" },\n  { "user": "bob",   "token": "c3d4" },\n  { "user": "carol", "token": "e5f6" }\n]',
+        },
+      },
+    },
+  ],
+};
+
 export const CHAPTERS: Chapter[] = [
   canvasBasics,
   httpNode,
@@ -618,4 +732,5 @@ export const CHAPTERS: Chapter[] = [
   loopMode,
   tagsConnections,
   runWorkflow,
+  scriptLoop,
 ];

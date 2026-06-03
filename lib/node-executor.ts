@@ -102,6 +102,20 @@ export interface MockEvent {
   payload?: unknown;
 }
 
+// Present when a loop node ran in *script* mode (config.loopScriptEnabled). The
+// user-authored script drives its own loop with call()/send()/log(); we report
+// back how many node calls it made, how many were fire-and-forget, the captured
+// log lines, and the wall-clock so the UI can show "📜 script • N calls".
+export interface ScriptMeta {
+  // Total `await call(...)` invocations the script made (awaited node runs).
+  calls: number;
+  // Total `send(...)` fire-and-forget dispatches.
+  sends: number;
+  // Lines emitted via log(...) inside the script (chronological).
+  logs: string[];
+  durationMs: number;
+}
+
 export interface ExecutionResult {
   nodeId: string;
   nodeName?: string;
@@ -118,6 +132,8 @@ export interface ExecutionResult {
   mock?: MockMeta;
   // Present when the node subscribed to a mock realtime event (no real socket).
   realtime?: RealtimeMeta;
+  // Present when this node ran a loop *script* (call/send/log driven loop).
+  script?: ScriptMeta;
 }
 
 // Hard cap so a hung endpoint can't keep a serverless invocation alive forever.
@@ -329,6 +345,189 @@ function executeInternalCall(
   return { nodeId: node.id, status: 'success', output, mock };
 }
 
+// Hard cap on node calls a single loop script may make, so a runaway
+// `while(true) await call(...)` can't keep a serverless invocation alive
+// forever. Independent of the loopRounds cap (that governs client loops).
+const SCRIPT_MAX_CALLS = 5000;
+// Hard wall-clock cap for a script loop (matches the client loop's 30-min cap).
+const SCRIPT_MAX_MS = 1_800_000;
+
+// Coerce an env var's stored string into a richer JS value FOR THE SCRIPT so a
+// `USERS=["a","b"]` env var iterates as an array (`for (const u of env.USERS)`),
+// `PORT=8080` is a number, `FLAG=true` a boolean, etc. We only parse values that
+// unambiguously look like JSON (array/object/number/bool/null); anything else
+// (a bare hostname, a token) stays a plain string. The env node's own output is
+// untouched — this richer view is script-only.
+function coerceEnvValue(raw: string): any {
+  const s = raw.trim();
+  if (s === '') return raw;
+  const looksJson =
+    /^[[{]/.test(s) || // array / object
+    /^-?\d+(\.\d+)?$/.test(s) || // number
+    s === 'true' || s === 'false' || s === 'null';
+  if (!looksJson) return raw;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return raw; // malformed JSON-ish string — keep it verbatim
+  }
+}
+
+// Build the `env` object the loop script sees: the resolved variables of every
+// upstream env node that feeds (directly) into this loop node. Each env node is
+// executed (so {{tag}} values resolve) and its { KEY: value } output is merged,
+// with each value coerced (JSON arrays/objects/numbers/bools become real JS
+// values so scripts can iterate them). Later env nodes win on key collisions.
+async function resolveUpstreamEnv(
+  node: PlannerNode,
+  ctx: ExecContext,
+  tags: Tag[],
+): Promise<Record<string, any>> {
+  const byId = new Map(ctx.nodes.map((n) => [n.id, n]));
+  const upstreamIds = ctx.edges
+    .filter((e) => e.targetNodeId === node.id)
+    .map((e) => e.sourceNodeId);
+  const env: Record<string, any> = {};
+  for (const srcId of upstreamIds) {
+    const src = byId.get(srcId);
+    if (!src || src.type !== 'env') continue;
+    const r = await executeNode(src, {}, tags, ctx);
+    if (r.status === 'success' && r.output && typeof r.output === 'object') {
+      for (const [k, v] of Object.entries(r.output as Record<string, any>)) {
+        env[k] = typeof v === 'string' ? coerceEnvValue(v) : v;
+      }
+    }
+  }
+  return env;
+}
+
+// Find a node by its (case-insensitive, trimmed) name so the script can address
+// nodes the way the user sees them on the canvas. Returns undefined if absent.
+function findNodeByName(name: string, ctx: ExecContext): PlannerNode | undefined {
+  const want = String(name ?? '').trim().toLowerCase();
+  return ctx.nodes.find((n) => String(n.name ?? '').trim().toLowerCase() === want);
+}
+
+// Deep-merge user `overrides` onto a node's config so `call('X', { body:{...} })`
+// can tweak just the parts it cares about (e.g. the request body) without
+// rebuilding the whole config. Arrays/primitives in overrides replace wholesale;
+// plain objects merge key-by-key one level deep (enough for body/headers/etc).
+function mergeConfig(
+  base: Record<string, any> | undefined,
+  overrides: any,
+): Record<string, any> {
+  const out: Record<string, any> = { ...(base ?? {}) };
+  if (!overrides || typeof overrides !== 'object') return out;
+  for (const [k, v] of Object.entries(overrides)) {
+    if (
+      v && typeof v === 'object' && !Array.isArray(v) &&
+      out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])
+    ) {
+      out[k] = { ...out[k], ...(v as Record<string, any>) };
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+// Execute a loop node's user-authored script (config.loopScript). The script is
+// an async function body with the signature (env, inputs, tags, call, send,
+// log) that drives its OWN loop and returns the value to pass downstream.
+//
+//   call(name, overrides?)  -> run node `name` (config deep-merged with
+//                              overrides), AWAIT it, return its output. Throws
+//                              if that node errored so the script's try/catch can
+//                              react. Counts toward SCRIPT_MAX_CALLS.
+//   send(name, data)        -> fire-and-forget: kick node `name` off (data
+//                              injected as config.scriptInput) WITHOUT awaiting
+//                              the result; errors are swallowed.
+//   log(msg)                -> capture a line into script meta (surfaced in UI).
+//
+// Returns { output: <script return value>, script: ScriptMeta }.
+async function runLoopScript(
+  node: PlannerNode,
+  inputs: Record<string, any>,
+  tags: Tag[],
+  ctx: ExecContext,
+): Promise<ExecutionResult> {
+  const startedAt = Date.now();
+  const code = String(node.config?.loopScript ?? '').trim();
+  if (!code) {
+    return { nodeId: node.id, status: 'error', error: 'Script mode is on but the loop script is empty.' };
+  }
+
+  const env = await resolveUpstreamEnv(node, ctx, tags);
+  const logs: string[] = [];
+  let calls = 0;
+  let sends = 0;
+
+  const guard = () => {
+    if (calls >= SCRIPT_MAX_CALLS) {
+      throw new Error(`Loop script exceeded ${SCRIPT_MAX_CALLS} node calls (runaway loop?).`);
+    }
+    if (Date.now() - startedAt >= SCRIPT_MAX_MS) {
+      throw new Error('Loop script exceeded the 30-minute limit.');
+    }
+  };
+
+  const call = async (name: string, overrides?: any): Promise<any> => {
+    guard();
+    const target = findNodeByName(name, ctx);
+    if (!target) throw new Error(`call("${name}"): no node named "${name}" on this canvas.`);
+    calls += 1;
+    const merged: PlannerNode = { ...target, config: mergeConfig(target.config, overrides) };
+    const r = await executeNode(merged, inputs, tags, ctx);
+    if (r.status !== 'success') {
+      throw new Error(`call("${name}") failed: ${r.error ?? 'unknown error'}`);
+    }
+    return r.output;
+  };
+
+  const send = async (name: string, data?: any): Promise<void> => {
+    const target = findNodeByName(name, ctx);
+    if (!target) {
+      logs.push(`send("${name}"): no such node — skipped`);
+      return;
+    }
+    sends += 1;
+    // Inject the payload as config.scriptInput so the target can read it, and
+    // also expose it on inputs for function nodes.
+    const merged: PlannerNode = {
+      ...target,
+      config: { ...(target.config ?? {}), scriptInput: data },
+    };
+    // Fire-and-forget: kick it off but don't await the result; swallow errors
+    // so a downstream hiccup never breaks the loop's return.
+    void executeNode(merged, { ...inputs, scriptInput: data }, tags, ctx).catch(() => {});
+  };
+
+  const log = (msg: unknown): void => {
+    logs.push(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  };
+
+  try {
+    // Async function body. We wrap in an AsyncFunction so the user can `await`.
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as
+      new (...args: string[]) => (...a: any[]) => Promise<any>;
+    const fn = new AsyncFunction('env', 'inputs', 'tags', 'call', 'send', 'log', code);
+    const output = await fn(env, inputs, tags, call, send, log);
+    return {
+      nodeId: node.id,
+      status: 'success',
+      output,
+      script: { calls, sends, logs, durationMs: Date.now() - startedAt },
+    };
+  } catch (e: any) {
+    return {
+      nodeId: node.id,
+      status: 'error',
+      error: e?.message ? String(e.message) : 'Loop script threw an error.',
+      script: { calls, sends, logs, durationMs: Date.now() - startedAt },
+    };
+  }
+}
+
 // Resolve an array of tag ids (referenced by an http node config) into
 // concrete key/value pairs using the project-level tag list. Unknown ids are
 // silently skipped (a tag may have been deleted after the node referenced it).
@@ -402,6 +601,19 @@ export async function executeNode(
   ctx?: ExecContext,
 ): Promise<ExecutionResult> {
   try {
+    // Script loop mode: the user opted into a self-driven loop script
+    // (config.loopEnabled + loopScriptEnabled + loopScript). The script controls
+    // its own iteration with await call(...) / send(...) and returns the value to
+    // pass downstream. Needs ctx to resolve named nodes + upstream env. This
+    // supersedes the node's normal behaviour for THIS execution.
+    if (
+      node.config?.loopEnabled === true &&
+      node.config?.loopScriptEnabled === true &&
+      ctx
+    ) {
+      return runLoopScript(node, inputs, tags, ctx);
+    }
+
     // Internal mock call: a function/http node wired to a server node can fire
     // one of that server's mock routes instead of running its own logic /
     // hitting the network. Resolved fully in-process (works on Vercel, no
@@ -923,7 +1135,7 @@ export async function executeWorkflow(
 
     await onStatus?.({ nodeId, nodeName: node.name, status: 'running', fromNodeIds });
 
-    const inputs = getNodeInputs(nodeId, edges, outputs);
+    const inputs = getNodeInputs(nodeId, edges, outputs, nodes);
     const result = await executeNode(node, inputs, currentTags, ctx);
     result.nodeName = node.name;
     result.nodeType = node.type;
@@ -998,14 +1210,34 @@ export async function executeSingleNode(
   };
 }
 
-function getNodeInputs(nodeId: string, edges: Edge[], outputs: Map<string, any>): Record<string, any> {
+// Build the `inputs` object a node sees during a workflow run. Each upstream
+// node's output is exposed under TWO keys so the user can reference it whichever
+// way reads naturally in a Function node / loop script:
+//   - the edge's label   (e.g. inputs["then"])      — explicit per-connection
+//   - the source node's name (e.g. inputs["Login"]) — "auto data passing"
+// Falls back to input_<id> only when a connection has neither a label nor a
+// resolvable source name. Both point at the same output object.
+function getNodeInputs(
+  nodeId: string,
+  edges: Edge[],
+  outputs: Map<string, any>,
+  nodes: PlannerNode[] = [],
+): Record<string, any> {
   const inputs: Record<string, any> = {};
+  const nameById = new Map(nodes.map((n) => [n.id, String(n.name ?? '').trim()]));
 
   edges
     .filter((e) => e.targetNodeId === nodeId)
     .forEach((edge) => {
-      const key = edge.label || `input_${edge.sourceNodeId.substring(0, 8)}`;
-      inputs[key] = outputs.get(edge.sourceNodeId);
+      const out = outputs.get(edge.sourceNodeId);
+      const srcName = nameById.get(edge.sourceNodeId);
+      // Key by the source node name (the canvas label the user sees)…
+      if (srcName) inputs[srcName] = out;
+      // …and by the edge label if present (per-connection key). When there's
+      // neither, fall back to a stable id-derived key so the data is still
+      // reachable.
+      if (edge.label) inputs[edge.label] = out;
+      else if (!srcName) inputs[`input_${edge.sourceNodeId.substring(0, 8)}`] = out;
     });
 
   return inputs;

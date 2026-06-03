@@ -216,7 +216,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // { round, total } where round is the 1-based current iteration and total is
   // the configured number of rounds. A node present in the map is looping.
   const [loopState, setLoopState] = useState<
-    Record<string, { round: number; total: number }>
+    // `script: true` marks a server-side script loop (round/total unused — the
+    // script self-loops, so the badge shows "📜 script" rather than i/N).
+    Record<string, { round: number; total: number; script?: boolean }>
   >({});
   // Desktop output column collapse (default expanded).
   const [outputCollapsed, setOutputCollapsed] = useState(false);
@@ -774,6 +776,56 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     [id, toast],
   );
 
+  // ---- Script loop mode (server-side, self-driven) ----
+  // When a node runs in script mode the loop lives ENTIRELY server-side: the
+  // user's script drives its own iteration with call()/send() and we fire the
+  // single-node execute route ONCE. The client just shows a "📜 script" badge
+  // while that one request is in flight, then renders the returned output +
+  // script meta (calls / sends / log lines) in the result panel. There is no
+  // client for-loop to stop — cancelling means navigating away / refresh.
+  const startScriptLoop = useCallback(
+    async (nodeId: string) => {
+      const node = nodesRef.current.find((n) => n.id === nodeId);
+      // Show the looping badge (script flavour) for the duration of the request.
+      setLoopState((prev) => ({ ...prev, [nodeId]: { round: 0, total: 0, script: true } }));
+      try {
+        const res = await fetch(`/api/projects/${id}/nodes/${nodeId}/execute`, { method: 'POST' });
+        const data = await res.json();
+        const result: ExecResult | undefined = data?.result;
+        if (result) {
+          const missing: MissingBinding[] = Array.isArray(data?.missingBindings)
+            ? data.missingBindings
+            : [];
+          if (Array.isArray(data?.tags)) setTags(data.tags);
+          setExecPanel({ title: node?.name ?? 'Node', results: [result], missingBindings: missing });
+          if (result.status === 'success') {
+            const n = result.script?.calls ?? 0;
+            toast.success(`Script finished (${n} call${n === 1 ? '' : 's'})`);
+          } else {
+            toast.warning(result.error || 'Script returned an error');
+          }
+        } else {
+          toast.error(data?.error || 'Script execution failed');
+        }
+      } catch {
+        toast.error('Script execution failed');
+        setExecPanel({
+          title: node?.name ?? 'Node',
+          results: [{ nodeId, status: 'error', error: 'Network error during script execution.' }],
+          missingBindings: [],
+        });
+      } finally {
+        setLoopState((prev) => {
+          if (!(nodeId in prev)) return prev;
+          const next = { ...prev };
+          delete next[nodeId];
+          return next;
+        });
+      }
+    },
+    [id, toast],
+  );
+
   // ---- Loop mode (client-side bounded for-loop) ----
   // A node id present here == currently looping. The boolean is the Stop flag:
   // setting it true breaks the running for-loop on its next iteration boundary.
@@ -1190,6 +1242,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   // re-subscribe to them every render.
   const startLoopRef = useRef(startLoop);
   startLoopRef.current = startLoop;
+  const startScriptLoopRef = useRef(startScriptLoop);
+  startScriptLoopRef.current = startScriptLoop;
   const stopLoopRef = useRef(stopLoop);
   stopLoopRef.current = stopLoop;
 
@@ -1197,7 +1251,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     (n: ApiNode): FlowNodeData => {
       const cfg = (n.config ?? {}) as Record<string, any>;
       const loopEnabled = cfg.loopEnabled === true;
+      // Script mode is a sub-mode of loop mode: the loop lives server-side and
+      // is driven by the user's script, so the Run button fires a single
+      // server-side execute instead of the client for-loop.
+      const scriptMode = loopEnabled && cfg.loopScriptEnabled === true;
       const looping = n.id in loopState;
+      const scriptLooping = looping && loopState[n.id]?.script === true;
       const run = runStatuses[n.id];
       return {
         name: n.name,
@@ -1210,6 +1269,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         looping,
         loopRound: loopState[n.id]?.round,
         loopTotal: loopState[n.id]?.total,
+        // True while a server-side script loop is in flight (badge "📜 script").
+        scriptLooping,
         // Live workflow-run status (Run Flow / SSE).
         runStatus: run?.status,
         runPreview: run?.preview,
@@ -1220,10 +1281,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         },
         onDelete: (nid: string) =>
           setDeleteTarget(nodesRef.current.find((x) => x.id === nid) ?? null),
-        // When loop mode is enabled, the Run button kicks off the loop instead of
-        // a one-shot execute. The Stop button (shown while looping) tears it down.
+        // Run button dispatch: script mode -> single server-side script run;
+        // loop mode -> client bounded for-loop; otherwise -> one-shot execute.
+        // The Stop button (shown while a client loop runs) tears it down.
         onExecute: (nid: string) =>
-          loopEnabled ? startLoopRef.current(nid) : executeOneRef.current(nid),
+          scriptMode
+            ? startScriptLoopRef.current(nid)
+            : loopEnabled
+            ? startLoopRef.current(nid)
+            : executeOneRef.current(nid),
         onStopLoop: (nid: string) => stopLoopRef.current(nid),
       };
     },
@@ -1938,10 +2004,74 @@ function OutputColumn({
 // (category -> language -> framework) and a host/port for the health-check.
 const CUSTOM_FRAMEWORK = '__custom__';
 
+// Starter scripts for the loop *script* mode editor. The user picks one from a
+// dropdown to seed the editor, then tweaks node names / fields. Each script is
+// an async body with (env, inputs, tags, call, send, log) in scope and returns
+// the value passed downstream.
+const SCRIPT_TEMPLATES: { id: string; label: string; code: string }[] = [
+  {
+    id: 'collect',
+    label: 'forEach + collect — loop array → call → return results',
+    code: `// Loop every user from an upstream env node, call an HTTP node per user,
+// and collect the successful results to pass downstream.
+const users = env.USERS || [];   // e.g. USERS=["alice","bob","carol"] on an env node
+
+const results = [];
+for (const user of users) {
+  const data = await call('HTTP Login', { body: { username: user } });
+  log('logged in ' + user);
+  if (data && data.token) {
+    results.push({ user, token: data.token });
+  }
+}
+
+return results;   // becomes this node's output (flows to the next node)`,
+  },
+  {
+    id: 'fire',
+    label: 'forEach + fire-and-forget — loop → send (ไม่รอ)',
+    code: `// Kick off a node per item WITHOUT waiting for each to finish. Good for
+// fanning out notifications / webhooks where you don't need the response.
+const items = env.USERS || [];
+
+for (const item of items) {
+  await send('Notify', { user: item });   // fire-and-forget, returns immediately
+  log('queued ' + item);
+}
+
+return { queued: items.length };`,
+  },
+  {
+    id: 'conditional',
+    label: 'forEach + conditional — loop → if → call different node',
+    code: `// Route each item to a different node based on a condition.
+const users = env.USERS || [];
+
+const ok = [], failed = [];
+for (const user of users) {
+  const res = await call('HTTP Login', { body: { username: user } });
+  if (res && res.token) {
+    await call('Save Session', { body: { user, token: res.token } });
+    ok.push(user);
+  } else {
+    await send('Alert', { user });   // fire-and-forget the failure path
+    failed.push(user);
+  }
+}
+
+return { ok, failed };`,
+  },
+];
+
 // Loop mode controls — a collapsible section available on any node type. When
 // enabled, the node's Run button runs a bounded for-loop on the client
 // (page.tsx startLoop) for `loopRounds` iterations, breaking early if the stop
 // condition is met, the error budget is exhausted, or the user hits Stop.
+//
+// Script sub-mode (loopScriptEnabled): instead of the bounded for-loop, the
+// node runs a user-authored async script ONCE server-side. The script drives
+// its own iteration with await call('NodeName', overrides) / send(...) and
+// returns the value to pass downstream. See lib/node-executor.ts runLoopScript.
 function LoopNodeFields({
   node,
   onChange,
@@ -1951,6 +2081,8 @@ function LoopNodeFields({
 }) {
   const cfg = (node.config ?? {}) as Record<string, any>;
   const enabled = cfg.loopEnabled === true;
+  const scriptEnabled = cfg.loopScriptEnabled === true;
+  const script = typeof cfg.loopScript === 'string' ? cfg.loopScript : '';
   const rounds = cfg.loopRounds != null ? String(cfg.loopRounds) : '';
   const maxErrors = cfg.loopMaxErrors != null ? String(cfg.loopMaxErrors) : '';
   const delayMs = cfg.loopDelayMs != null ? String(cfg.loopDelayMs) : '';
@@ -1981,6 +2113,83 @@ function LoopNodeFields({
 
       {enabled && (
         <div className="mt-3 flex flex-col gap-3 pl-6">
+          {/* Script mode toggle — switches the loop from a bounded for-loop to a
+              user-authored, self-driven script (call/send/log). */}
+          <div className="rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 p-2.5">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                data-testid="loop-script-toggle"
+                checked={scriptEnabled}
+                onChange={(e) => setCfg({ loopScriptEnabled: e.target.checked })}
+                className="h-4 w-4 accent-[var(--color-primary)]"
+              />
+              <span className="text-sm font-semibold text-[var(--color-neutral-800)]">
+                📜 Use Script Mode
+              </span>
+            </label>
+            <p className="mt-1 pl-6 text-[11px] text-[var(--color-neutral-500)]">
+              เขียน JavaScript คุม loop เอง: วน array จาก env, <code className="font-mono">await call(&apos;NodeName&apos;)</code> ทีละตัว แล้ว <code className="font-mono">return</code> ผลลัพธ์. รันครั้งเดียวบน server.
+            </p>
+          </div>
+
+          {scriptEnabled ? (
+            <div className="flex flex-col gap-2">
+              {/* Template seeder */}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+                  Starter template
+                </label>
+                <select
+                  data-testid="loop-script-template"
+                  defaultValue=""
+                  onChange={(e) => {
+                    const t = SCRIPT_TEMPLATES.find((x) => x.id === e.target.value);
+                    if (t) setCfg({ loopScript: t.code });
+                    e.target.value = '';
+                  }}
+                  className="w-full rounded-lg border border-[var(--color-neutral-300)] bg-white px-3 py-2 text-xs focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                >
+                  <option value="" disabled>
+                    เลือก template เพื่อใส่โค้ดตัวอย่าง…
+                  </option>
+                  {SCRIPT_TEMPLATES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Code editor */}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+                  Loop script (JavaScript, async)
+                </label>
+                <textarea
+                  rows={14}
+                  data-testid="loop-script-input"
+                  value={script}
+                  spellCheck={false}
+                  placeholder={SCRIPT_TEMPLATES[0].code}
+                  onChange={(e) => setCfg({ loopScript: e.target.value })}
+                  className="w-full resize-y rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs leading-relaxed focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                />
+                <div className="mt-1.5 rounded-md bg-[var(--color-neutral-100)] p-2 text-[10px] leading-relaxed text-[var(--color-neutral-600)]">
+                  <span className="font-semibold text-[var(--color-neutral-700)]">ตัวแปร / ฟังก์ชันที่ใช้ได้:</span>
+                  <ul className="mt-1 space-y-0.5">
+                    <li><code className="font-mono text-[var(--color-primary)]">env.KEY</code> — env vars จาก env node ที่ต่อเข้ามา (เช่น <code className="font-mono">env.USERS</code>)</li>
+                    <li><code className="font-mono text-[var(--color-primary)]">inputs[&apos;NodeName&apos;]</code> — output ของ node ก่อนหน้า (ตาม edge label)</li>
+                    <li><code className="font-mono text-[var(--color-primary)]">await call(&apos;NodeName&apos;, overrides?)</code> — รัน node นั้น รอผล คืน output</li>
+                    <li><code className="font-mono text-[var(--color-primary)]">await send(&apos;NodeName&apos;, data)</code> — fire-and-forget ไม่รอผล</li>
+                    <li><code className="font-mono text-[var(--color-primary)]">log(msg)</code> — บันทึก log โชว์ใน output panel</li>
+                    <li><code className="font-mono text-[var(--color-primary)]">return results</code> — ส่งค่าต่อ downstream</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          ) : (
+          <>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
@@ -2085,6 +2294,8 @@ function LoopNodeFields({
               <code className="font-mono">output</code> (ผลลัพธ์ดิบ). เว้นว่าง = วนจนกว่าจะกด Stop เอง
             </p>
           </div>
+          </>
+          )}
         </div>
       )}
     </div>

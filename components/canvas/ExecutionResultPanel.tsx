@@ -47,6 +47,14 @@ export interface ExecRealtimeMeta {
   durationMs: number;
 }
 
+// Mirrors lib/node-executor.ts ScriptMeta (loop script mode run).
+export interface ExecScriptMeta {
+  calls: number;
+  sends: number;
+  logs: string[];
+  durationMs: number;
+}
+
 export interface ExecResult {
   nodeId: string;
   nodeName?: string;
@@ -58,6 +66,7 @@ export interface ExecResult {
   server?: ExecServerMeta;
   mock?: ExecMockMeta;
   realtime?: ExecRealtimeMeta;
+  script?: ExecScriptMeta;
 }
 
 export interface MissingBinding {
@@ -315,6 +324,7 @@ function ResultCard({
   const server = result.server;
   const mock = result.mock;
   const realtime = result.realtime;
+  const script = result.script;
   const ok = result.status === 'success';
   return (
     <div className="rounded-xl border border-[var(--color-neutral-200)] bg-white">
@@ -353,6 +363,18 @@ function ResultCard({
           {realtime ? (
             <span className="text-xs text-[var(--color-neutral-500)]">{realtime.durationMs} ms</span>
           ) : null}
+          {script ? (
+            <span
+              data-testid="script-meta-badge"
+              className="inline-flex items-center rounded-full bg-[var(--color-primary)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+              title="This node ran a loop script (call/send-driven)."
+            >
+              📜 script · {script.calls} call{script.calls === 1 ? '' : 's'}
+            </span>
+          ) : null}
+          {script ? (
+            <span className="text-xs text-[var(--color-neutral-500)]">{script.durationMs} ms</span>
+          ) : null}
           {http ? (
             <span className="text-xs text-[var(--color-neutral-500)]">{http.durationMs} ms</span>
           ) : null}
@@ -376,6 +398,22 @@ function ResultCard({
           )}
         </div>
       </div>
+
+      {/* Loop script run summary: counts + captured log() lines. */}
+      {script ? (
+        <div className="flex flex-col gap-1.5 border-b border-[var(--color-neutral-200)] px-4 py-3" data-testid="script-result">
+          <div className="flex flex-wrap gap-3 text-xs text-[var(--color-neutral-600)]">
+            <span><span className="font-semibold text-[var(--color-neutral-800)]">{script.calls}</span> call{script.calls === 1 ? '' : 's'}</span>
+            <span><span className="font-semibold text-[var(--color-neutral-800)]">{script.sends}</span> send{script.sends === 1 ? '' : 's'}</span>
+            <span><span className="font-semibold text-[var(--color-neutral-800)]">{script.durationMs}</span> ms</span>
+          </div>
+          {script.logs.length > 0 ? (
+            <pre className="mt-1 max-h-40 overflow-auto rounded-md bg-[var(--color-neutral-900)] px-3 py-2 font-mono text-[11px] leading-relaxed text-[var(--color-neutral-100)]">
+              {script.logs.join('\n')}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Server health-check detail (distinct from an http response body) */}
       {server ? (

@@ -24,6 +24,9 @@ export interface FlowNodeData {
   looping?: boolean;
   loopRound?: number;
   loopTotal?: number;
+  // True while a server-side *script* loop is running. The badge shows
+  // "📜 script" (the script self-loops, so there's no i/N to display).
+  scriptLooping?: boolean;
   // Live workflow-run status (set while "Run Flow" streams over SSE). Drives the
   // corner status icon + border tint + a mini output preview after done.
   //   'pending' -> queued, not yet reached
@@ -62,7 +65,10 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   const isRealtimeCall = isInternalCall && cfg.targetKind === 'realtime';
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
   const loopEnabled = cfg.loopEnabled === true;
+  // Script sub-mode: the loop is driven by a user script server-side.
+  const scriptMode = loopEnabled && cfg.loopScriptEnabled === true;
   const looping = data.looping === true;
+  const scriptLooping = data.scriptLooping === true;
   // Human-readable delay between rounds (≥1000ms shown as seconds), if any.
   const loopDelayMs = Math.min(60000, Math.max(0, Math.floor(Number(cfg.loopDelayMs) || 0)));
   const loopDelayLabel =
@@ -309,7 +315,24 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
 
       {loopEnabled ? (
         <div className="px-3 pt-2">
-          {looping ? (
+          {scriptMode ? (
+            scriptLooping ? (
+              <span
+                data-testid="script-status-badge"
+                className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+              >
+                <span className="animate-pulse">📜</span>
+                script • running…
+              </span>
+            ) : (
+              <span
+                data-testid="script-enabled-badge"
+                className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+              >
+                📜 script mode
+              </span>
+            )
+          ) : looping ? (
             <span
               data-testid="loop-status-badge"
               className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-white"
@@ -356,7 +379,18 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
       ) : null}
 
       <div className="flex gap-1 px-2 pb-2 pt-2">
-        {looping ? (
+        {scriptLooping ? (
+          // Script loop runs server-side in one request — no cooperative client
+          // stop. Show a disabled "running" affordance until it returns.
+          <button
+            disabled
+            title="Script loop is running on the server"
+            data-testid="script-running-btn"
+            className="nodrag flex-1 cursor-default rounded-md bg-[var(--color-primary)] py-1.5 text-xs font-semibold text-white opacity-80"
+          >
+            📜 running…
+          </button>
+        ) : looping ? (
           <button
             onClick={(e) => {
               e.stopPropagation();

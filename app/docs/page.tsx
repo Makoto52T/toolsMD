@@ -376,6 +376,40 @@ function LoopMode() {
         <li>you press <strong>Stop</strong>,</li>
         <li>a safety cap is hit: <strong>max 1000 rounds</strong> and <strong>max 30 minutes</strong> of wall-clock time.</li>
       </UL>
+
+      <H3>Script Mode (forEach pattern)</H3>
+      <P>
+        Toggle <strong>📜 Use Script Mode</strong> inside the Loop section to swap the fixed for-loop for a
+        JavaScript script that drives its own loop. Instead of repeating the same node N times, the script can
+        iterate an array, call <em>other</em> nodes per item, branch, and return a collected result — all in one
+        server-side run. This is the no-code way to do{' '}
+        <Code>forEach(user → call HTTP → collect)</Code>.
+      </P>
+      <P>The script is an <Code>async</Code> body. These are in scope:</P>
+      <UL>
+        <li><Code>env</Code> — variables from any <strong>env node</strong> wired into this node, e.g. <Code>env.USERS</Code> (an array) or <Code>env.PORT</Code>.</li>
+        <li><Code>inputs[&apos;NodeName&apos;]</Code> — the output of an upstream node (also keyed by the edge label).</li>
+        <li><Code>tags</Code> — the project tag list.</li>
+        <li><Code>await call(&apos;NodeName&apos;, overrides?)</Code> — runs that node for real (its config deep-merged with <Code>overrides</Code>), waits, and returns its output. Throws if that node errors, so a <Code>try/catch</Code> works.</li>
+        <li><Code>await send(&apos;NodeName&apos;, data)</Code> — fire-and-forget: kicks the node off without waiting for the result (good for fanning out webhooks).</li>
+        <li><Code>log(msg)</Code> — records a line shown in the output panel.</li>
+        <li><Code>return value</Code> — becomes this node&apos;s output, flowing downstream.</li>
+      </UL>
+      <P>A forEach-and-collect example — log in every user from an env array and gather the tokens:</P>
+      <Block>{`const users = env.USERS;            // ["alice","bob","carol"]
+const results = [];
+for (const user of users) {
+  const data = await call('HTTP Login', { body: { username: user } });
+  if (data.token) results.push({ user, token: data.token });
+}
+return results;`}</Block>
+      <P>
+        Pick a starter from the <strong>template</strong> dropdown (forEach + collect, forEach + fire-and-forget,
+        forEach + conditional). The loop runs <em>once</em> on the server, so there&apos;s no client{' '}
+        <strong>Stop</strong> button — while it runs the node shows a <Code>📜 script • running…</Code> badge, and
+        the result panel reports the call/send counts and any <Code>log()</Code> lines. The same safety caps
+        apply: <strong>max 5000 calls</strong> and <strong>max 30 minutes</strong>.
+      </P>
     </section>
   );
 }
