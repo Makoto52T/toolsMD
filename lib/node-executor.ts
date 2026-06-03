@@ -420,6 +420,58 @@ function findNodeByName(name: string, ctx: ExecContext): PlannerNode | undefined
 // those; they only fill in the {{placeholders}} the node already declares. Temp
 // tags take precedence over project tags of the same key (last wins, since
 // interpolateTags resolves left-to-right and we append temp tags after).
+// Decide whether a `call(name, params)` should auto-inject its params as the
+// HTTP request body. This is the convenience path for the common case:
+//
+//   call('Login API', { username, password })   // node has NO body configured
+//     -> POST with body {"username":..,"password":..}
+//
+// It ONLY fires when ALL of these hold, so it never overrides intent:
+//   - the target is an http-request node
+//   - its method is a body-bearing verb (POST / PUT / PATCH)
+//   - the node has no body of its own:
+//       * bodyMode 'none'                      -> explicitly no body  -> SKIP
+//       * bodyMode 'raw'  with a non-empty body-> user wrote a body   -> SKIP
+//       * bodyMode 'form' with >=1 row         -> user built a form   -> SKIP
+//     i.e. only an absent/empty raw body (or no bodyMode at all) qualifies
+//   - params is a non-empty plain object
+//
+// When it fires we return a SHALLOW-cloned node with config.bodyMode='raw' and
+// config.body=params; the executor then JSON-stringifies it like any raw body.
+// The clone is per-call and never persisted. When it doesn't fire we return the
+// node untouched so the node's own template + temp-tag interpolation runs as
+// before (priority 1: a node with a {{placeholder}} body keeps using it).
+function maybeInjectParamsAsBody(
+  target: PlannerNode,
+  params: any,
+): PlannerNode {
+  if (target.type !== 'http-request') return target;
+  const cfg = target.config ?? {};
+  const method = String(cfg.method ?? 'GET').toUpperCase();
+  if (!['POST', 'PUT', 'PATCH'].includes(method)) return target;
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return target;
+  if (Object.keys(params).length === 0) return target;
+
+  // Does the node already declare a body? Mirror the executor's body-mode logic.
+  const mode = cfg.bodyMode;
+  if (mode === 'none') return target; // explicit opt-out
+  if (mode === 'form') {
+    const hasRow = Array.isArray(cfg.bodyForm) && cfg.bodyForm.length > 0;
+    if (hasRow) return target;
+  }
+  // raw / undefined: only an empty/missing body qualifies for injection.
+  const rawBody = cfg.body;
+  const hasRawBody =
+    rawBody != null &&
+    !(typeof rawBody === 'string' && rawBody.trim() === '') &&
+    !(typeof rawBody === 'object' && Object.keys(rawBody).length === 0);
+  if (mode === 'raw' && hasRawBody) return target;
+  if (mode == null && hasRawBody) return target;
+
+  // Auto-inject: clone the node with the params as a raw JSON body.
+  return { ...target, config: { ...cfg, bodyMode: 'raw', body: params } };
+}
+
 function paramsToTempTags(params: any): Tag[] {
   if (!params || typeof params !== 'object' || Array.isArray(params)) return [];
   const out: Tag[] = [];
@@ -486,12 +538,19 @@ async function runLoopScript(
     const target = findNodeByName(name, ctx);
     if (!target) throw new Error(`call("${name}"): no node named "${name}" on this canvas.`);
     calls += 1;
-    // The target node keeps its OWN method/url/headers/body config — `params`
-    // only supply temp tags that fill the node's {{placeholders}}. Temp tags are
-    // appended AFTER the project tags so they win on key collisions
-    // (interpolateTags is last-write-wins).
+    // `params` are wired into the target two complementary ways:
+    //   1. as temp tags, so the node's own {{placeholders}} (url / headers /
+    //      body template) resolve to them — temp tags are appended AFTER the
+    //      project tags so they win on key collisions (last-write-wins).
+    //   2. if the target is an http POST/PUT/PATCH with NO body of its own,
+    //      the params object is auto-injected as a raw JSON body so the bare
+    //      `call('Login API', { username, password })` just works without the
+    //      user having to hand-write a {{username}} body template. A node that
+    //      already declares a body (template, form, or explicit 'none') is left
+    //      untouched — path 1 still fills its placeholders.
     const callTags = [...tags, ...paramsToTempTags(params)];
-    const r = await executeNode(target, inputs, callTags, ctx);
+    const effectiveTarget = maybeInjectParamsAsBody(target, params);
+    const r = await executeNode(effectiveTarget, inputs, callTags, ctx);
     if (r.status !== 'success') {
       throw new Error(`call("${name}") failed: ${r.error ?? 'unknown error'}`);
     }
