@@ -377,13 +377,20 @@ function LoopMode() {
         <li>a safety cap is hit: <strong>max 1000 rounds</strong> and <strong>max 30 minutes</strong> of wall-clock time.</li>
       </UL>
 
-      <H3>Script Mode (forEach pattern)</H3>
+      <H3>Script Mode (any node)</H3>
       <P>
-        Toggle <strong>📜 Use Script Mode</strong> inside the Loop section to swap the fixed for-loop for a
-        JavaScript script that drives its own loop. Instead of repeating the same node N times, the script can
-        iterate an array, call <em>other</em> nodes per item, branch, and return a collected result — all in one
-        server-side run. This is the no-code way to do{' '}
-        <Code>forEach(user → call HTTP → collect)</Code>.
+        Toggle <strong>📜 เปิด Script Mode</strong> on <em>any</em> node — http-request, function, server,
+        puppeteer, env, or loop — to override the node&apos;s normal behaviour with a JavaScript script that runs
+        once on the server. Instead of the node&apos;s built-in logic, the script can iterate an array, call{' '}
+        <em>other</em> nodes per item, branch, and return a collected result. This is the no-code way to do{' '}
+        <Code>forEach(user → call HTTP → collect)</Code>. Script Mode is independent of Loop: with Loop off the
+        script runs a single time; with Loop on the script drives its own iteration.
+      </P>
+      <P>
+        When an <strong>env node</strong> is wired upstream, its keys appear as clickable chips under{' '}
+        <strong>Available Env Keys</strong> — click one to insert <Code>env.KEY</Code> at the cursor. Upstream
+        node names (<Code>inputs[&apos;Name&apos;]</Code>) and project tags (<Code>tags.key</Code>) get the same
+        one-click insert.
       </P>
       <P>The script is an <Code>async</Code> body. These are in scope:</P>
       <UL>
@@ -405,7 +412,7 @@ for (const user of users) {
 return results;`}</Block>
       <P>
         Pick a starter from the <strong>template</strong> dropdown (forEach + collect, forEach + fire-and-forget,
-        forEach + conditional). The loop runs <em>once</em> on the server, so there&apos;s no client{' '}
+        forEach + conditional). The script runs <em>once</em> on the server, so there&apos;s no client{' '}
         <strong>Stop</strong> button — while it runs the node shows a <Code>📜 script • running…</Code> badge, and
         the result panel reports the call/send counts and any <Code>log()</Code> lines. The same safety caps
         apply: <strong>max 5000 calls</strong> and <strong>max 30 minutes</strong>.

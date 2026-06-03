@@ -65,8 +65,9 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   const isRealtimeCall = isInternalCall && cfg.targetKind === 'realtime';
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
   const loopEnabled = cfg.loopEnabled === true;
-  // Script sub-mode: the loop is driven by a user script server-side.
-  const scriptMode = loopEnabled && cfg.loopScriptEnabled === true;
+  // Script mode: the node is driven by a user script server-side. Available on
+  // any node, independent of loop. `loopScriptEnabled` is the legacy flag.
+  const scriptMode = cfg.scriptEnabled === true || cfg.loopScriptEnabled === true;
   const looping = data.looping === true;
   const scriptLooping = data.scriptLooping === true;
   // Human-readable delay between rounds (≥1000ms shown as seconds), if any.
@@ -313,26 +314,30 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
         </div>
       ) : null}
 
-      {loopEnabled ? (
+      {/* Script mode overrides the node's behaviour — show the script badge
+          (independent of loop). Otherwise show the loop badges when loop is on. */}
+      {scriptMode ? (
         <div className="px-3 pt-2">
-          {scriptMode ? (
-            scriptLooping ? (
-              <span
-                data-testid="script-status-badge"
-                className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-white"
-              >
-                <span className="animate-pulse">📜</span>
-                script • running…
-              </span>
-            ) : (
-              <span
-                data-testid="script-enabled-badge"
-                className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
-              >
-                📜 script mode
-              </span>
-            )
-          ) : looping ? (
+          {scriptLooping ? (
+            <span
+              data-testid="script-status-badge"
+              className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+            >
+              <span className="animate-pulse">📜</span>
+              script • running…
+            </span>
+          ) : (
+            <span
+              data-testid="script-enabled-badge"
+              className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]"
+            >
+              📜 script mode
+            </span>
+          )}
+        </div>
+      ) : loopEnabled ? (
+        <div className="px-3 pt-2">
+          {looping ? (
             <span
               data-testid="loop-status-badge"
               className="inline-flex items-center gap-1 rounded-md bg-[var(--color-primary)] px-1.5 py-0.5 text-[10px] font-semibold text-white"

@@ -601,14 +601,18 @@ export async function executeNode(
   ctx?: ExecContext,
 ): Promise<ExecutionResult> {
   try {
-    // Script loop mode: the user opted into a self-driven loop script
-    // (config.loopEnabled + loopScriptEnabled + loopScript). The script controls
-    // its own iteration with await call(...) / send(...) and returns the value to
-    // pass downstream. Needs ctx to resolve named nodes + upstream env. This
-    // supersedes the node's normal behaviour for THIS execution.
+    // Script mode: the user opted into a self-driven script on this node
+    // (config.scriptEnabled + loopScript). Available on ANY node type and
+    // independent of loop mode:
+    //   - loop OFF -> the script runs ONCE (server-side) with full context.
+    //   - loop ON  -> the script still runs once here and drives its own
+    //                 iteration via await call(...) / send(...).
+    // It supersedes the node's normal type-specific behaviour for THIS execution.
+    // `loopScriptEnabled` is the legacy flag (script was once nested under loop).
+    // Needs ctx to resolve named nodes + upstream env.
     if (
-      node.config?.loopEnabled === true &&
-      node.config?.loopScriptEnabled === true &&
+      (node.config?.scriptEnabled === true ||
+        node.config?.loopScriptEnabled === true) &&
       ctx
     ) {
       return runLoopScript(node, inputs, tags, ctx);

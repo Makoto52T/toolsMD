@@ -1251,10 +1251,12 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     (n: ApiNode): FlowNodeData => {
       const cfg = (n.config ?? {}) as Record<string, any>;
       const loopEnabled = cfg.loopEnabled === true;
-      // Script mode is a sub-mode of loop mode: the loop lives server-side and
-      // is driven by the user's script, so the Run button fires a single
-      // server-side execute instead of the client for-loop.
-      const scriptMode = loopEnabled && cfg.loopScriptEnabled === true;
+      // Script mode is available on ANY node, independent of loop mode: the
+      // script runs server-side (once, or driving its own loop), so the Run
+      // button fires a single server-side execute instead of the client
+      // for-loop. `loopScriptEnabled` is the legacy flag.
+      const scriptMode =
+        cfg.scriptEnabled === true || cfg.loopScriptEnabled === true;
       const looping = n.id in loopState;
       const scriptLooping = looping && loopState[n.id]?.script === true;
       const run = runStatuses[n.id];
@@ -1797,6 +1799,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               <EnvNodeFields node={editingNode} onChange={setEditingNode} />
             )}
 
+            {/* Script mode — common section on every node type. */}
+            <ScriptFields
+              node={editingNode}
+              nodes={nodes}
+              edges={edges}
+              tags={tags}
+              onChange={setEditingNode}
+            />
+
             <LoopNodeFields node={editingNode} onChange={setEditingNode} />
           </div>
         )}
@@ -2063,15 +2074,260 @@ return { ok, failed };`,
   },
 ];
 
+// ---------- Script mode config fields (Edit Node modal) ----------
+// Script mode is a COMMON section available on every node type (http-request,
+// function, server, puppeteer, env, loop, ...). When config.scriptEnabled is on,
+// the node's Run button runs the user-authored async script (config.loopScript)
+// ONCE server-side instead of the node's normal behaviour. The script gets the
+// full context: env (from upstream env nodes), inputs (upstream node outputs),
+// tags, and the call/send/log helpers. See lib/node-executor.ts runLoopScript.
+//
+// Env Key Picker: if any env node is wired upstream of this node, its keys show
+// as clickable chips that insert `env.KEY` at the cursor. inputs[...] (upstream
+// node names) and tags.* (project tag keys) get the same treatment.
+function ScriptFields({
+  node,
+  nodes,
+  edges,
+  tags,
+  onChange,
+}: {
+  node: ApiNode;
+  nodes: ApiNode[];
+  edges: ApiEdge[];
+  tags: Tag[];
+  onChange: (n: ApiNode) => void;
+}) {
+  const cfg = (node.config ?? {}) as Record<string, any>;
+  // Canonical flag is `scriptEnabled`; `loopScriptEnabled` is the legacy flag
+  // (script used to live nested under loop mode) — honour it for old projects.
+  const enabled = cfg.scriptEnabled === true || cfg.loopScriptEnabled === true;
+  const script = typeof cfg.loopScript === 'string' ? cfg.loopScript : '';
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const setCfg = (patch: Record<string, any>) =>
+    onChange({ ...node, config: { ...cfg, ...patch } });
+
+  // Direct upstream nodes (an edge ends at this node). Used for inputs[...] and
+  // to find env nodes feeding env.* keys.
+  const upstreamNodes = useMemo(() => {
+    const srcIds = new Set(
+      edges.filter((e) => e.targetNodeId === node.id).map((e) => e.sourceNodeId),
+    );
+    return nodes.filter((n) => srcIds.has(n.id) && n.id !== node.id);
+  }, [edges, nodes, node.id]);
+
+  const envKeys = useMemo(() => {
+    const out: { key: string; value: string }[] = [];
+    const seen = new Set<string>();
+    for (const n of upstreamNodes) {
+      if (n.type !== 'env') continue;
+      const vars = ((n.config ?? {}) as Record<string, any>).vars;
+      if (!Array.isArray(vars)) continue;
+      for (const v of vars) {
+        const key = String(v?.key ?? '').trim();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ key, value: v?.secret === true ? '•••••' : String(v?.value ?? '') });
+      }
+    }
+    return out;
+  }, [upstreamNodes]);
+
+  const inputNames = useMemo(
+    () => upstreamNodes.map((n) => n.name).filter((nm) => nm && nm.trim()),
+    [upstreamNodes],
+  );
+
+  // Insert text at the textarea caret (or append if it isn't focused). Keeps the
+  // script in config + restores the caret just after the inserted snippet.
+  const insertSnippet = (snippet: string) => {
+    const ta = taRef.current;
+    const cur = script;
+    if (!ta) {
+      setCfg({ loopScript: cur + snippet });
+      return;
+    }
+    const start = ta.selectionStart ?? cur.length;
+    const end = ta.selectionEnd ?? cur.length;
+    const next = cur.slice(0, start) + snippet + cur.slice(end);
+    setCfg({ loopScript: next });
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = start + snippet.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  };
+
+  return (
+    <div className="rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 p-3">
+      <label className="flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          data-testid="script-enabled-toggle"
+          checked={enabled}
+          onChange={(e) =>
+            // Write the canonical flag; clear the legacy one to avoid two
+            // sources of truth lingering on the same node.
+            setCfg({ scriptEnabled: e.target.checked, loopScriptEnabled: undefined })
+          }
+          className="h-4 w-4 accent-[var(--color-primary)]"
+        />
+        <span className="text-sm font-semibold text-[var(--color-neutral-800)]">
+          📜 เปิด Script Mode
+        </span>
+      </label>
+      <p className="mt-1 pl-6 text-[11px] text-[var(--color-neutral-500)]">
+        เขียน JavaScript คุม node เอง รันครั้งเดียวบน server (override พฤติกรรมปกติของ node).
+        ใช้ได้ทุก node type. เปิด Loop ด้วย → script คุม loop เอง.
+      </p>
+
+      {enabled && (
+        <div className="mt-3 flex flex-col gap-2 pl-6">
+          {/* Template seeder */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+              Starter template
+            </label>
+            <select
+              data-testid="script-template"
+              defaultValue=""
+              onChange={(e) => {
+                const t = SCRIPT_TEMPLATES.find((x) => x.id === e.target.value);
+                if (t) setCfg({ loopScript: t.code });
+                e.target.value = '';
+              }}
+              className="w-full rounded-lg border border-[var(--color-neutral-300)] bg-white px-3 py-2 text-xs focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+            >
+              <option value="" disabled>
+                เลือก template เพื่อใส่โค้ดตัวอย่าง…
+              </option>
+              {SCRIPT_TEMPLATES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Context picker — clickable chips that insert into the script. */}
+          <div className="rounded-md border border-[var(--color-neutral-200)] bg-white p-2">
+            <div data-testid="script-env-keys">
+              <p className="mb-1 text-[11px] font-semibold text-[var(--color-neutral-700)]">
+                Available Env Keys
+              </p>
+              {envKeys.length === 0 ? (
+                <p className="text-[10px] italic text-[var(--color-neutral-400)]">
+                  เชื่อม Env node มาก่อนเพื่อเลือก key
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {envKeys.map(({ key, value }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      data-testid={`script-env-chip-${key}`}
+                      onClick={() => insertSnippet(`env.${key}`)}
+                      title={`insert env.${key}`}
+                      className="flex items-center gap-1 rounded border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 px-1.5 py-0.5 text-[10px] hover:bg-[var(--color-primary)]/15"
+                    >
+                      <code className="font-mono text-[var(--color-primary)]">env.{key}</code>
+                      <span className="max-w-[120px] truncate text-[var(--color-neutral-400)]">
+                        {value}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {inputNames.length > 0 && (
+              <div className="mt-2" data-testid="script-inputs">
+                <p className="mb-1 text-[11px] font-semibold text-[var(--color-neutral-700)]">
+                  Upstream inputs
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {inputNames.map((nm) => (
+                    <button
+                      key={nm}
+                      type="button"
+                      onClick={() => insertSnippet(`inputs['${nm}']`)}
+                      title={`insert inputs['${nm}']`}
+                      className="rounded border border-[var(--color-neutral-300)] bg-[var(--color-neutral-50)] px-1.5 py-0.5 text-[10px] hover:bg-[var(--color-neutral-100)]"
+                    >
+                      <code className="font-mono text-[var(--color-neutral-700)]">
+                        inputs[&apos;{nm}&apos;]
+                      </code>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tags.length > 0 && (
+              <div className="mt-2" data-testid="script-tags">
+                <p className="mb-1 text-[11px] font-semibold text-[var(--color-neutral-700)]">
+                  Tags
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {tags.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => insertSnippet(`tags.${t.key}`)}
+                      title={`insert tags.${t.key}`}
+                      className="rounded border border-[var(--color-neutral-300)] bg-[var(--color-neutral-50)] px-1.5 py-0.5 text-[10px] hover:bg-[var(--color-neutral-100)]"
+                    >
+                      <code className="font-mono text-[var(--color-neutral-700)]">tags.{t.key}</code>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Code editor */}
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+              Script (JavaScript, async)
+            </label>
+            <textarea
+              ref={taRef}
+              rows={14}
+              data-testid="script-input"
+              value={script}
+              spellCheck={false}
+              placeholder={SCRIPT_TEMPLATES[0].code}
+              onChange={(e) => setCfg({ loopScript: e.target.value })}
+              className="w-full resize-y rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs leading-relaxed focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+            />
+            <div className="mt-1.5 rounded-md bg-[var(--color-neutral-100)] p-2 text-[10px] leading-relaxed text-[var(--color-neutral-600)]">
+              <span className="font-semibold text-[var(--color-neutral-700)]">ตัวแปร / ฟังก์ชันที่ใช้ได้:</span>
+              <ul className="mt-1 space-y-0.5">
+                <li><code className="font-mono text-[var(--color-primary)]">env.KEY</code> — env vars จาก env node ที่ต่อเข้ามา (เช่น <code className="font-mono">env.USERS</code>)</li>
+                <li><code className="font-mono text-[var(--color-primary)]">inputs[&apos;NodeName&apos;]</code> — output ของ node ก่อนหน้า (ตาม edge label / ชื่อ node)</li>
+                <li><code className="font-mono text-[var(--color-primary)]">tags.KEY</code> — ค่า tag ใน project</li>
+                <li><code className="font-mono text-[var(--color-primary)]">await call(&apos;NodeName&apos;, overrides?)</code> — รัน node นั้น รอผล คืน output</li>
+                <li><code className="font-mono text-[var(--color-primary)]">await send(&apos;NodeName&apos;, data)</code> — fire-and-forget ไม่รอผล</li>
+                <li><code className="font-mono text-[var(--color-primary)]">log(msg)</code> — บันทึก log โชว์ใน output panel</li>
+                <li><code className="font-mono text-[var(--color-primary)]">return results</code> — ส่งค่าต่อ downstream</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Loop mode controls — a collapsible section available on any node type. When
 // enabled, the node's Run button runs a bounded for-loop on the client
 // (page.tsx startLoop) for `loopRounds` iterations, breaking early if the stop
 // condition is met, the error budget is exhausted, or the user hits Stop.
 //
-// Script sub-mode (loopScriptEnabled): instead of the bounded for-loop, the
-// node runs a user-authored async script ONCE server-side. The script drives
-// its own iteration with await call('NodeName', overrides) / send(...) and
-// returns the value to pass downstream. See lib/node-executor.ts runLoopScript.
+// Script mode (config.scriptEnabled + loopScript) is its own section — see
+// ScriptFields below. It overrides this for-loop entirely (the script drives
+// its own iteration). When both are off, Run is a plain one-shot execute.
 function LoopNodeFields({
   node,
   onChange,
@@ -2081,8 +2337,6 @@ function LoopNodeFields({
 }) {
   const cfg = (node.config ?? {}) as Record<string, any>;
   const enabled = cfg.loopEnabled === true;
-  const scriptEnabled = cfg.loopScriptEnabled === true;
-  const script = typeof cfg.loopScript === 'string' ? cfg.loopScript : '';
   const rounds = cfg.loopRounds != null ? String(cfg.loopRounds) : '';
   const maxErrors = cfg.loopMaxErrors != null ? String(cfg.loopMaxErrors) : '';
   const delayMs = cfg.loopDelayMs != null ? String(cfg.loopDelayMs) : '';
@@ -2113,83 +2367,6 @@ function LoopNodeFields({
 
       {enabled && (
         <div className="mt-3 flex flex-col gap-3 pl-6">
-          {/* Script mode toggle — switches the loop from a bounded for-loop to a
-              user-authored, self-driven script (call/send/log). */}
-          <div className="rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 p-2.5">
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                data-testid="loop-script-toggle"
-                checked={scriptEnabled}
-                onChange={(e) => setCfg({ loopScriptEnabled: e.target.checked })}
-                className="h-4 w-4 accent-[var(--color-primary)]"
-              />
-              <span className="text-sm font-semibold text-[var(--color-neutral-800)]">
-                📜 Use Script Mode
-              </span>
-            </label>
-            <p className="mt-1 pl-6 text-[11px] text-[var(--color-neutral-500)]">
-              เขียน JavaScript คุม loop เอง: วน array จาก env, <code className="font-mono">await call(&apos;NodeName&apos;)</code> ทีละตัว แล้ว <code className="font-mono">return</code> ผลลัพธ์. รันครั้งเดียวบน server.
-            </p>
-          </div>
-
-          {scriptEnabled ? (
-            <div className="flex flex-col gap-2">
-              {/* Template seeder */}
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
-                  Starter template
-                </label>
-                <select
-                  data-testid="loop-script-template"
-                  defaultValue=""
-                  onChange={(e) => {
-                    const t = SCRIPT_TEMPLATES.find((x) => x.id === e.target.value);
-                    if (t) setCfg({ loopScript: t.code });
-                    e.target.value = '';
-                  }}
-                  className="w-full rounded-lg border border-[var(--color-neutral-300)] bg-white px-3 py-2 text-xs focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                >
-                  <option value="" disabled>
-                    เลือก template เพื่อใส่โค้ดตัวอย่าง…
-                  </option>
-                  {SCRIPT_TEMPLATES.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Code editor */}
-              <div>
-                <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
-                  Loop script (JavaScript, async)
-                </label>
-                <textarea
-                  rows={14}
-                  data-testid="loop-script-input"
-                  value={script}
-                  spellCheck={false}
-                  placeholder={SCRIPT_TEMPLATES[0].code}
-                  onChange={(e) => setCfg({ loopScript: e.target.value })}
-                  className="w-full resize-y rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 font-mono text-xs leading-relaxed focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                />
-                <div className="mt-1.5 rounded-md bg-[var(--color-neutral-100)] p-2 text-[10px] leading-relaxed text-[var(--color-neutral-600)]">
-                  <span className="font-semibold text-[var(--color-neutral-700)]">ตัวแปร / ฟังก์ชันที่ใช้ได้:</span>
-                  <ul className="mt-1 space-y-0.5">
-                    <li><code className="font-mono text-[var(--color-primary)]">env.KEY</code> — env vars จาก env node ที่ต่อเข้ามา (เช่น <code className="font-mono">env.USERS</code>)</li>
-                    <li><code className="font-mono text-[var(--color-primary)]">inputs[&apos;NodeName&apos;]</code> — output ของ node ก่อนหน้า (ตาม edge label)</li>
-                    <li><code className="font-mono text-[var(--color-primary)]">await call(&apos;NodeName&apos;, overrides?)</code> — รัน node นั้น รอผล คืน output</li>
-                    <li><code className="font-mono text-[var(--color-primary)]">await send(&apos;NodeName&apos;, data)</code> — fire-and-forget ไม่รอผล</li>
-                    <li><code className="font-mono text-[var(--color-primary)]">log(msg)</code> — บันทึก log โชว์ใน output panel</li>
-                    <li><code className="font-mono text-[var(--color-primary)]">return results</code> — ส่งค่าต่อ downstream</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          ) : (
-          <>
           <div className="flex gap-3">
             <div className="flex-1">
               <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
@@ -2294,8 +2471,6 @@ function LoopNodeFields({
               <code className="font-mono">output</code> (ผลลัพธ์ดิบ). เว้นว่าง = วนจนกว่าจะกด Stop เอง
             </p>
           </div>
-          </>
-          )}
         </div>
       )}
     </div>
