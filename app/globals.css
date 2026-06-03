@@ -184,6 +184,65 @@ p { text-wrap: pretty; }
   animation: ds-pulse-accent 1.6s ease-out infinite;
 }
 
+/* ---- Tutorial (/tutorial) animated demo ---- */
+@keyframes tut-node-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(207, 58, 30, 0.5); }
+  50% { box-shadow: 0 0 0 7px rgba(207, 58, 30, 0); }
+}
+@keyframes tut-edge-draw {
+  from { stroke-dashoffset: 600; }
+  to { stroke-dashoffset: 0; }
+}
+.tut-edge-draw {
+  stroke-dasharray: 600;
+  animation: tut-edge-draw 0.7s var(--ease-out-quart) forwards;
+}
+@keyframes tut-click-ripple {
+  0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0.55; }
+  100% { transform: translate(-50%, -50%) scale(2.4); opacity: 0; }
+}
+.tut-click-ripple {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 9999px;
+  background: rgba(207, 58, 30, 0.4);
+  animation: tut-click-ripple 0.6s var(--ease-out-quart) forwards;
+}
+@keyframes tut-badge-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.tut-badge-pop {
+  display: inline-block;
+  animation: tut-badge-pop 0.4s var(--ease-out-quint);
+}
+@keyframes tut-sheet-right {
+  from { transform: translateX(115%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.tut-sheet-right {
+  animation: tut-sheet-right 0.45s var(--ease-out-quint);
+}
+@keyframes tut-sheet-bottom {
+  from { transform: translateY(115%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.tut-sheet-bottom {
+  animation: tut-sheet-bottom 0.45s var(--ease-out-quint);
+}
+@keyframes tut-caret {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.tut-caret {
+  animation: tut-caret 0.7s step-end infinite;
+  color: var(--color-primary);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ds-animate-fade-in,
   .ds-animate-slide-up,
@@ -191,6 +250,10 @@ p { text-wrap: pretty; }
   .ds-pulse-accent {
     animation: ds-fade-in 0.01ms;
   }
+  .tut-edge-draw, .tut-sheet-right, .tut-sheet-bottom, .tut-badge-pop, .tut-click-ripple {
+    animation-duration: 0.01ms !important;
+  }
+  .tut-node-glow, .tut-caret { animation: none; }
   .ds-animate-spin { animation-duration: 1.4s; }
   * { scroll-behavior: auto !important; }
 }

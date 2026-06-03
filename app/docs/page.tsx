@@ -90,6 +90,13 @@ function Overview() {
         Open a project to reach the canvas. The left panel lists tags, the center is the board, and the right
         panel shows execution output.
       </P>
+      <P>
+        New here? The{' '}
+        <Link href="/tutorial" className="font-semibold text-[var(--color-primary)] hover:underline">
+          📖 animated Tutorial
+        </Link>{' '}
+        walks through every node type and feature step-by-step.
+      </P>
     </section>
   );
 }
@@ -513,12 +520,20 @@ export default function DocsPage() {
               Docs
             </span>
           </div>
-          <Link
-            href="/dashboard"
-            className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
-          >
-            Dashboard →
-          </Link>
+          <div className="flex items-center gap-1">
+            <Link
+              href="/tutorial"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
+            >
+              📖 Tutorial
+            </Link>
+            <Link
+              href="/dashboard"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
+            >
+              Dashboard →
+            </Link>
+          </div>
         </div>
       </header>
 
