@@ -644,78 +644,94 @@ const scriptLoop: Chapter = {
   num: 10,
   icon: '📜',
   title: 'Script Loop',
-  blurb: 'forEach: env array → call ทีละตัว → collect',
+  blurb: 'เขียน JS คุม flow เอง: call() · send() · return',
   steps: [
     {
-      label: 'env node เก็บ array ที่จะวนซ้ำ',
+      label: 'เปิด Script Mode บน node ไหนก็ได้',
       detail:
-        'ตั้ง env var USERS=["alice","bob","carol"] บน env node แล้วต่อเส้นเข้า loop node — ค่าจะโผล่เป็น env.USERS ในสคริปต์',
+        'ในหน้าแก้ node ติ๊ก 📜 Use Script Mode — node จะรันโค้ด JS ที่คุณเขียนแทนพฤติกรรมปกติ. สคริปต์เป็น async function ที่ได้ตัวช่วย 6 ตัว: env, inputs, tags, call(), send(), log(). มี 3 คำสั่งหลักที่ต้องรู้ — call, send, return',
       scene: {
         nodes: [
-          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40, glow: true },
-          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: '📜 script mode', x: 70, y: 56 },
+          { id: 'script', type: 'function', label: '📜 Script', subtitle: 'script mode', x: 42, y: 46, glow: true },
         ],
-        edges: [{ id: 'e', from: 'env', to: 'loop', label: 'env', draw: true }],
-      },
-    },
-    {
-      label: 'เปิด Script Mode บน loop node',
-      detail:
-        'ใน Loop section ติ๊ก 📜 Use Script Mode แล้วเลือก template "forEach + collect" — ได้โค้ดตัวอย่างพร้อมแก้',
-      scene: {
-        nodes: [
-          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40 },
-          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: '📜 script mode', x: 70, y: 56 },
-        ],
-        edges: [{ id: 'e', from: 'env', to: 'loop', label: 'env' }],
         sheet: {
-          title: 'Each user · 📜 Script',
+          title: '📜 Script · 3 คำสั่งหลัก',
           code:
-            'const users = env.USERS;        // ["alice","bob","carol"]\n' +
-            'const results = [];\n' +
-            'for (const user of users) {\n' +
-            "  const data = await call('HTTP Login', {\n" +
-            '    body: { username: user },\n' +
-            '  });\n' +
-            '  if (data.token) results.push({ user, token: data.token });\n' +
-            '}\n' +
-            'return results;                 // ส่งต่อ downstream',
+            'await call(\'Node\')   // ยิง node อื่น รอผลกลับ\n' +
+            'await send(\'Node\')   // ยิงทิ้ง ไม่รอ (fire & forget)\n' +
+            'return value         // ส่งค่าออกไป downstream',
         },
       },
     },
     {
-      label: 'await call() ยิง node อื่นทีละรอบ',
+      label: '1️⃣ await call() — ยิง node อื่น แล้วรอผลกลับ',
       detail:
-        'call("HTTP Login", { body }) รัน node ชื่อนั้นจริง รอผล แล้วคืน output. สคริปต์คุม loop เอง รันครั้งเดียวบน server (badge 📜 script • running…)',
+        'call("Fetch Todo") รัน node ชื่อนั้นจริง ๆ รอจนเสร็จ แล้วคืน output มาเป็นค่า. ใช้เมื่อต้องเอาผลลัพธ์มาใช้ต่อ — เช่นเรียก API แล้วเอา data มาปรับแต่ง. (Template: "Call แล้ว Return")',
       scene: {
         nodes: [
-          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40 },
-          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: 'call → HTTP Login', x: 50, y: 50, badge: '📜 script • running…' },
-          { id: 'http', type: 'http-request', label: 'HTTP Login', subtitle: 'POST /login', x: 80, y: 66 },
+          { id: 'script', type: 'function', label: '📞 Call & Return', subtitle: 'await call(...)', x: 18, y: 40, badge: '📜 script • running…' },
+          { id: 'fetch', type: 'http-request', label: 'Fetch Todo', subtitle: 'GET /todos/1', x: 66, y: 64 },
         ],
-        edges: [
-          { id: 'e', from: 'env', to: 'loop', label: 'env' },
-          { id: 'e2', from: 'loop', to: 'http', label: 'call', draw: true },
-        ],
+        edges: [{ id: 'e', from: 'script', to: 'fetch', label: 'call', draw: true }],
+        sheet: {
+          title: '📞 Call & Return · 📜 Script',
+          from: 'bottom',
+          code:
+            '// เรียก node แล้วรับผลกลับมา\n' +
+            "const todo = await call('Fetch Todo');\n" +
+            '\n' +
+            'return {\n' +
+            '  task: todo.title,\n' +
+            '  done: todo.completed,\n' +
+            '};',
+        },
       },
     },
     {
-      label: 'return results → array 3 รายการ',
+      label: '2️⃣ await send() — ยิงทิ้งโดยไม่รอ (fire & forget)',
       detail:
-        'สคริปต์ return results ค่าจะกลายเป็น output ของ node (เห็นใน panel + badge 📜 script · 3 calls). หรือใช้ await send("Next", data) แบบ fire-and-forget ไม่รอผลก็ได้',
+        'send("Notify") เตะ node ให้ทำงานแล้วไปต่อทันที ไม่รอผล. เหมาะกับงานข้างเคียงที่ไม่ต้องใช้ผลลัพธ์ — เช่นส่ง notification, log, webhook. งานหลัก return ได้เลยไม่ติดบล็อก. (Template: "Send (Fire & Forget)")',
       scene: {
         nodes: [
-          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 24, y: 40 },
-          { id: 'loop', type: 'http-request', label: 'Each user', subtitle: '📜 script · 3 calls', x: 70, y: 56, badge: '✓ done' },
+          { id: 'script', type: 'function', label: '🔔 Main Process', subtitle: 'await send(...)', x: 18, y: 46, badge: '✓ done' },
+          { id: 'notify', type: 'http-request', label: '📨 Notify', subtitle: 'POST /post', x: 66, y: 46 },
         ],
-        edges: [{ id: 'e', from: 'env', to: 'loop', label: 'env' }],
+        edges: [{ id: 'e', from: 'script', to: 'notify', label: 'send', draw: true }],
+        sheet: {
+          title: '🔔 Main Process · 📜 Script',
+          from: 'bottom',
+          code:
+            "const result = { status: 'done' };\n" +
+            '\n' +
+            '// ยิง notify ไปโดยไม่รอผล\n' +
+            "await send('📨 Notify');\n" +
+            '\n' +
+            '// ทำงานต่อทันที ไม่รอ Notify เสร็จ\n' +
+            'return result;',
+        },
+      },
+    },
+    {
+      label: '3️⃣ return value — ส่งค่าต่อ downstream',
+      detail:
+        'ค่าที่ return กลายเป็น output ของ node — node ถัดไปอ่านผ่าน inputs["ชื่อ node"]. รวมกับ for-loop + call() ในตัวเดียว = วน array → ยิง API ทีละตัว → return รวมเป็น list. (Template: "Loop + Call + Return")',
+      scene: {
+        nodes: [
+          { id: 'env', type: 'env', label: 'Config', subtitle: 'USERS=[3]', x: 14, y: 24 },
+          { id: 'loop', type: 'function', label: '🔁 Loop Script', subtitle: '📜 script · 3 calls', x: 52, y: 30, badge: '✓ done' },
+          { id: 'http', type: 'http-request', label: 'Get User Data', subtitle: 'GET /users/1', x: 52, y: 70 },
+        ],
+        edges: [
+          { id: 'e', from: 'env', to: 'loop', label: 'env' },
+          { id: 'e2', from: 'loop', to: 'http', label: 'call' },
+        ],
         output: {
           status: 200,
           statusText: 'OK',
           ms: 642,
           slideIn: true,
           body:
-            '[\n  { "user": "alice", "token": "a1b2" },\n  { "user": "bob",   "token": "c3d4" },\n  { "user": "carol", "token": "e5f6" }\n]',
+            '[\n  { "user": "alice", "name": "Leanne" },\n  { "user": "bob",   "name": "Ervin"  },\n  { "user": "carol", "name": "Clementine" }\n]',
         },
       },
     },

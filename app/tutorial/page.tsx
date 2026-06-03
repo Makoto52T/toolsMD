@@ -11,6 +11,31 @@ import { CHAPTERS } from '@/components/tutorial/chapters';
 // Flow) so every step animates exactly. Mobile: chapters become a horizontal
 // scroller above the demo.
 
+// Public "Script Mode" example templates (owned by toonteamm, is_public_template=1,
+// fixed ids seeded by scripts/seed-script-mode-examples.cjs). They appear in every
+// user's Templates section on the dashboard, ready to fork. Opening them directly
+// requires being the owner; everyone else forks from the dashboard first.
+const SCRIPT_EXAMPLES = [
+  {
+    id: '5c1b7000-0000-4000-a000-000000000001',
+    icon: '🔁',
+    title: 'Loop + Call + Return',
+    blurb: 'env array → วน for-of → call() ยิง HTTP ทุกรอบ → return รวมเป็น list',
+  },
+  {
+    id: '5c1b7000-0000-4000-a000-000000000002',
+    icon: '📞',
+    title: 'Call แล้ว Return',
+    blurb: 'await call() รับผลกลับ → ปรับแต่ง → return ส่งต่อ node ถัดไปผ่าน inputs[]',
+  },
+  {
+    id: '5c1b7000-0000-4000-a000-000000000003',
+    icon: '🔔',
+    title: 'Send (Fire & Forget)',
+    blurb: 'await send() ยิง notification ทิ้งโดยไม่รอผล → งานหลัก return ทันที',
+  },
+];
+
 export default function TutorialPage() {
   const [active, setActive] = useState(0);
   const chapter = CHAPTERS[active];
@@ -170,6 +195,34 @@ export default function TutorialPage() {
             </div>
           </main>
         </div>
+
+        <section className="mt-12 border-t border-[var(--color-neutral-200)] pt-8">
+          <h2 className="text-lg font-bold tracking-tight text-[var(--color-neutral-900)]">
+            ลองเล่น template ตัวอย่าง
+          </h2>
+          <p className="mt-1 text-sm text-[var(--color-neutral-500)]">
+            3 ตัวอย่าง Script Mode ที่รันได้จริง — call() · send() · return. กดเปิดเพื่อดูโครงสร้าง
+            แล้วกด ▶ Run เพื่อเห็นผลลัพธ์ (ถ้ายังไม่ได้ของคุณ ให้กด “Use template” ใน Dashboard เพื่อ fork ก่อน)
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            {SCRIPT_EXAMPLES.map((ex) => (
+              <Link
+                key={ex.id}
+                href={`/projects/${ex.id}`}
+                className="group rounded-xl border border-[var(--color-neutral-200)] bg-white p-4 transition-all hover:-translate-y-0.5 hover:border-[var(--color-primary)] hover:shadow-md"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{ex.icon}</span>
+                  <span className="font-semibold text-[var(--color-neutral-900)]">{ex.title}</span>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-[var(--color-neutral-500)]">{ex.blurb}</p>
+                <span className="mt-3 inline-block text-xs font-medium text-[var(--color-primary)] group-hover:underline">
+                  เปิด template →
+                </span>
+              </Link>
+            ))}
+          </div>
+        </section>
 
         <footer className="mt-12 border-t border-[var(--color-neutral-200)] pt-6 text-sm text-[var(--color-neutral-400)]">
           อยากอ่านแบบละเอียด?{' '}
