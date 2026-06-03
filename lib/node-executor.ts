@@ -138,6 +138,9 @@ export interface ExecutionResult {
 
 // Hard cap so a hung endpoint can't keep a serverless invocation alive forever.
 const HTTP_TIMEOUT_MS = 20000;
+// Ceiling for a per-node config.timeoutMs override. A slow proxy (e.g. a
+// Puppeteer capture service) can opt into a longer wait, but never beyond this.
+const HTTP_TIMEOUT_MAX_MS = 120000;
 // Health-check probe timeout — short so an unreachable server fails fast and
 // never blocks a chain run.
 const HEALTH_TIMEOUT_MS = 5000;
@@ -749,6 +752,11 @@ export async function executeNode(
           tagQuery,
           applyTagBody = false,
           tagBody,
+          // Per-node request timeout override. Defaults to HTTP_TIMEOUT_MS. Lets
+          // a node that proxies a slow operation (e.g. a Puppeteer capture
+          // service that launches a headless browser) wait longer than the
+          // 20s default. Clamped to a sane ceiling so a typo can't hang a run.
+          timeoutMs,
         } = node.config;
 
         const httpMethod = String(method).toUpperCase();
@@ -914,8 +922,12 @@ export async function executeNode(
         }
 
         const started = Date.now();
+        const reqTimeout =
+          typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+            ? Math.min(timeoutMs, HTTP_TIMEOUT_MAX_MS)
+            : HTTP_TIMEOUT_MS;
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+        const timer = setTimeout(() => controller.abort(), reqTimeout);
         try {
           // Serialise the body. A raw-mode string body is ALREADY the literal
           // payload the user typed (e.g. the JSON text `{"user":"bob"}`) — sending
@@ -987,7 +999,7 @@ export async function executeNode(
             nodeId: node.id,
             status: 'error',
             error: aborted
-              ? `Request timed out after ${HTTP_TIMEOUT_MS}ms`
+              ? `Request timed out after ${reqTimeout}ms`
               : e?.message || 'Network request failed',
             http: {
               request: { method: httpMethod, url: finalUrl },
