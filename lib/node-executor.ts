@@ -565,6 +565,7 @@ export function applyOutputBindings(
   }
   const next = tags.map((t) => ({ ...t }));
   const byId = new Map(next.map((t) => [t.id, t]));
+  const byKey = new Map(next.map((t) => [t.key, t]));
   const missing: MissingBinding[] = [];
 
   for (const b of bindings) {
@@ -575,7 +576,10 @@ export function applyOutputBindings(
       continue;
     }
     const value = valueToTagString(resolved);
-    const existing = byId.get(b.tagId);
+    // Match by id first (fast path). If the tag was deleted and re-created its
+    // id changes, so fall back to matching by key — the binding still points at
+    // the user's logical tag and must not silently create a stale duplicate.
+    const existing = byId.get(b.tagId) ?? (b.tagKey ? byKey.get(b.tagKey) : undefined);
     if (existing) {
       existing.value = value; // last-write-wins
     } else {
@@ -589,6 +593,7 @@ export function applyOutputBindings(
       };
       next.push(created);
       byId.set(created.id, created);
+      byKey.set(created.key, created);
     }
   }
   return { tags: next, missing };
