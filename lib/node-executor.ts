@@ -363,6 +363,7 @@ function coerceEnvValue(raw: string): any {
   if (s === '') return raw;
   const looksJson =
     /^[[{]/.test(s) || // array / object
+    /^"(?:[^"\\]|\\.)*"$/.test(s) || // double-quoted JSON string literal -> unwrap
     /^-?\d+(\.\d+)?$/.test(s) || // number
     s === 'true' || s === 'false' || s === 'null';
   if (!looksJson) return raw;
