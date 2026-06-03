@@ -1421,7 +1421,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   if (loading) return <FullPageSpinner label="Loading project..." />;
 
   return (
-    <div className="flex h-screen flex-col bg-white">
+    <div className="flex h-dvh flex-col bg-white">
       {/* Header — instrument top bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-neutral-200)] bg-white px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-3">
