@@ -688,7 +688,34 @@ const scriptLoop: Chapter = {
       },
     },
     {
-      label: '2️⃣ await send() — ยิงทิ้งโดยไม่รอ (fire & forget)',
+      label: '2️⃣ call() แบบ axios — กำหนด method + body เอง',
+      detail:
+        'overrides ตัวที่สองของ call() ทำงานเหมือน axios: ใส่ { method } เปลี่ยน verb (พิมพ์เล็ก/ใหญ่ก็ได้) และ { body: {...} } ส่ง JSON body เข้าไปตรง ๆ — แม้ HTTP node นั้นจะถูกตั้งไว้เป็น form/none ก็จะถูกส่งเป็น raw JSON ให้อัตโนมัติ. เท่ากับ axios.post(url, data) / axios.get(url).',
+      scene: {
+        nodes: [
+          { id: 'script', type: 'function', label: '📜 Login Loop', subtitle: 'call(…, { method, body })', x: 18, y: 40, badge: '📜 script • running…' },
+          { id: 'login', type: 'http-request', label: 'Login API', subtitle: 'POST /login', x: 66, y: 64 },
+        ],
+        edges: [{ id: 'e', from: 'script', to: 'login', label: 'call', draw: true }],
+        sheet: {
+          title: '📞 call() = axios · 📜 Script',
+          from: 'bottom',
+          code:
+            '// เหมือน axios.post(url, { username, password })\n' +
+            "const res = await call('Login API', {\n" +
+            "  method: 'POST',\n" +
+            '  body: { username: env.USER, password: env.PASS },\n' +
+            '});\n' +
+            '\n' +
+            '// เหมือน axios.get(url) — เปลี่ยน verb ไม่ต้องมี body\n' +
+            "const me = await call('Get Profile', { method: 'GET' });\n" +
+            '\n' +
+            'return { token: res.token, me };',
+        },
+      },
+    },
+    {
+      label: '3️⃣ await send() — ยิงทิ้งโดยไม่รอ (fire & forget)',
       detail:
         'send("Notify") เตะ node ให้ทำงานแล้วไปต่อทันที ไม่รอผล. เหมาะกับงานข้างเคียงที่ไม่ต้องใช้ผลลัพธ์ — เช่นส่ง notification, log, webhook. งานหลัก return ได้เลยไม่ติดบล็อก. (Template: "Send (Fire & Forget)")',
       scene: {
@@ -712,7 +739,7 @@ const scriptLoop: Chapter = {
       },
     },
     {
-      label: '3️⃣ return value — ส่งค่าต่อ downstream',
+      label: '4️⃣ return value — ส่งค่าต่อ downstream',
       detail:
         'ค่าที่ return กลายเป็น output ของ node — node ถัดไปอ่านผ่าน inputs["ชื่อ node"]. รวมกับ for-loop + call() ในตัวเดียว = วน array → ยิง API ทีละตัว → return รวมเป็น list. (Template: "Loop + Call + Return")',
       scene: {

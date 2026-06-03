@@ -408,6 +408,39 @@ function findNodeByName(name: string, ctx: ExecContext): PlannerNode | undefined
   return ctx.nodes.find((n) => String(n.name ?? '').trim().toLowerCase() === want);
 }
 
+// Normalize the ergonomic shorthand a loop script passes to `call(name, opts)`
+// into concrete http-node config keys, so calling a node feels like axios:
+//
+//   call('Login', { method: 'POST', body: { username, password } })
+//     -> config.method = 'POST'
+//        config.body   = { username, password }  (raw JSON, stringified on send)
+//        config.bodyMode = 'raw'   (so a node saved as form/none still honours
+//                                   the body the script handed it)
+//
+//   call('Get Data', { method: 'GET' })
+//     -> config.method = 'GET'  (GET skips the body entirely downstream)
+//
+// We only touch keys the caller actually provided; everything else falls
+// through to mergeConfig untouched.
+function normalizeCallOverrides(overrides: any): any {
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+    return overrides;
+  }
+  const out: Record<string, any> = { ...overrides };
+  // method: accept any case ('get'/'Post') and uppercase it.
+  if (typeof out.method === 'string') {
+    out.method = out.method.trim().toUpperCase();
+  }
+  // body: if the script handed us a value but didn't say which body mode to
+  // use, treat it as a raw body (axios-style). An explicit bodyMode in the
+  // overrides wins. An explicit `bodyForm` likewise means "form mode", so we
+  // don't force raw in that case.
+  if ('body' in out && out.bodyMode == null && !('bodyForm' in out)) {
+    out.bodyMode = 'raw';
+  }
+  return out;
+}
+
 // Deep-merge user `overrides` onto a node's config so `call('X', { body:{...} })`
 // can tweak just the parts it cares about (e.g. the request body) without
 // rebuilding the whole config. Arrays/primitives in overrides replace wholesale;
@@ -476,7 +509,10 @@ async function runLoopScript(
     const target = findNodeByName(name, ctx);
     if (!target) throw new Error(`call("${name}"): no node named "${name}" on this canvas.`);
     calls += 1;
-    const merged: PlannerNode = { ...target, config: mergeConfig(target.config, overrides) };
+    const merged: PlannerNode = {
+      ...target,
+      config: mergeConfig(target.config, normalizeCallOverrides(overrides)),
+    };
     const r = await executeNode(merged, inputs, tags, ctx);
     if (r.status !== 'success') {
       throw new Error(`call("${name}") failed: ${r.error ?? 'unknown error'}`);
