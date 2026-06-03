@@ -916,13 +916,21 @@ export async function executeNode(
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
         try {
+          // Serialise the body. A raw-mode string body is ALREADY the literal
+          // payload the user typed (e.g. the JSON text `{"user":"bob"}`) — sending
+          // it through JSON.stringify would double-encode it into a quoted string
+          // ("\"{\\\"user\\\"...\""), so the server sees a JSON string, not an
+          // object. Strings go on the wire verbatim; objects/arrays (form mode,
+          // auto-injected call() params) get JSON.stringify'd.
+          let wireBody: string | undefined;
+          if (httpMethod !== 'GET' && httpMethod !== 'HEAD' && finalBody) {
+            wireBody =
+              typeof finalBody === 'string' ? finalBody : JSON.stringify(finalBody);
+          }
           const response = await fetch(finalUrl, {
             method: httpMethod,
             headers: { 'Content-Type': 'application/json', ...finalHeaders },
-            body:
-              httpMethod !== 'GET' && httpMethod !== 'HEAD' && finalBody
-                ? JSON.stringify(finalBody)
-                : undefined,
+            body: wireBody,
             signal: controller.signal,
           });
           clearTimeout(timer);
