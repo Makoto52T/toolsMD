@@ -408,58 +408,31 @@ function findNodeByName(name: string, ctx: ExecContext): PlannerNode | undefined
   return ctx.nodes.find((n) => String(n.name ?? '').trim().toLowerCase() === want);
 }
 
-// Normalize the ergonomic shorthand a loop script passes to `call(name, opts)`
-// into concrete http-node config keys, so calling a node feels like axios:
+// Turn the params object a loop script passes to `call(name, params)` into a
+// list of *temporary* tags, layered on top of the project tags so the target
+// node's own template (URL / headers / body) interpolates them via {{key}}.
 //
-//   call('Login', { method: 'POST', body: { username, password } })
-//     -> config.method = 'POST'
-//        config.body   = { username, password }  (raw JSON, stringified on send)
-//        config.bodyMode = 'raw'   (so a node saved as form/none still honours
-//                                   the body the script handed it)
+//   call('Login API', { username: 'alice', password: env.PASS })
+//     -> temp tags [{ key:'username', value:'alice' }, { key:'password', ... }]
+//        which replace {{username}} / {{password}} anywhere in the node config.
 //
-//   call('Get Data', { method: 'GET' })
-//     -> config.method = 'GET'  (GET skips the body entirely downstream)
-//
-// We only touch keys the caller actually provided; everything else falls
-// through to mergeConfig untouched.
-function normalizeCallOverrides(overrides: any): any {
-  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
-    return overrides;
-  }
-  const out: Record<string, any> = { ...overrides };
-  // method: accept any case ('get'/'Post') and uppercase it.
-  if (typeof out.method === 'string') {
-    out.method = out.method.trim().toUpperCase();
-  }
-  // body: if the script handed us a value but didn't say which body mode to
-  // use, treat it as a raw body (axios-style). An explicit bodyMode in the
-  // overrides wins. An explicit `bodyForm` likewise means "form mode", so we
-  // don't force raw in that case.
-  if ('body' in out && out.bodyMode == null && !('bodyForm' in out)) {
-    out.bodyMode = 'raw';
-  }
-  return out;
-}
-
-// Deep-merge user `overrides` onto a node's config so `call('X', { body:{...} })`
-// can tweak just the parts it cares about (e.g. the request body) without
-// rebuilding the whole config. Arrays/primitives in overrides replace wholesale;
-// plain objects merge key-by-key one level deep (enough for body/headers/etc).
-function mergeConfig(
-  base: Record<string, any> | undefined,
-  overrides: any,
-): Record<string, any> {
-  const out: Record<string, any> = { ...(base ?? {}) };
-  if (!overrides || typeof overrides !== 'object') return out;
-  for (const [k, v] of Object.entries(overrides)) {
-    if (
-      v && typeof v === 'object' && !Array.isArray(v) &&
-      out[k] && typeof out[k] === 'object' && !Array.isArray(out[k])
-    ) {
-      out[k] = { ...out[k], ...(v as Record<string, any>) };
-    } else {
-      out[k] = v;
-    }
+// The node keeps its OWN method/url/headers/body shape — params never override
+// those; they only fill in the {{placeholders}} the node already declares. Temp
+// tags take precedence over project tags of the same key (last wins, since
+// interpolateTags resolves left-to-right and we append temp tags after).
+function paramsToTempTags(params: any): Tag[] {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return [];
+  const out: Tag[] = [];
+  for (const [key, value] of Object.entries(params)) {
+    const k = String(key).trim();
+    if (!k) continue;
+    const v =
+      value == null
+        ? ''
+        : typeof value === 'object'
+        ? JSON.stringify(value)
+        : String(value);
+    out.push({ id: `tmp_${k}`, key: k, value: v, type: detectTagType(v) });
   }
   return out;
 }
@@ -468,10 +441,14 @@ function mergeConfig(
 // an async function body with the signature (env, inputs, tags, call, send,
 // log) that drives its OWN loop and returns the value to pass downstream.
 //
-//   call(name, overrides?)  -> run node `name` (config deep-merged with
-//                              overrides), AWAIT it, return its output. Throws
-//                              if that node errored so the script's try/catch can
-//                              react. Counts toward SCRIPT_MAX_CALLS.
+//   call(name, params?)     -> run node `name`, AWAIT it, return its output. The
+//                              node keeps its own method/url/headers/body; the
+//                              `params` object is injected as temp tags so the
+//                              node's {{placeholders}} resolve to them
+//                              (e.g. call('Login', { username, password }) fills
+//                              {{username}} / {{password}}). Throws if that node
+//                              errored so the script's try/catch can react.
+//                              Counts toward SCRIPT_MAX_CALLS.
 //   send(name, data)        -> fire-and-forget: kick node `name` off (data
 //                              injected as config.scriptInput) WITHOUT awaiting
 //                              the result; errors are swallowed.
@@ -504,16 +481,17 @@ async function runLoopScript(
     }
   };
 
-  const call = async (name: string, overrides?: any): Promise<any> => {
+  const call = async (name: string, params?: any): Promise<any> => {
     guard();
     const target = findNodeByName(name, ctx);
     if (!target) throw new Error(`call("${name}"): no node named "${name}" on this canvas.`);
     calls += 1;
-    const merged: PlannerNode = {
-      ...target,
-      config: mergeConfig(target.config, normalizeCallOverrides(overrides)),
-    };
-    const r = await executeNode(merged, inputs, tags, ctx);
+    // The target node keeps its OWN method/url/headers/body config — `params`
+    // only supply temp tags that fill the node's {{placeholders}}. Temp tags are
+    // appended AFTER the project tags so they win on key collisions
+    // (interpolateTags is last-write-wins).
+    const callTags = [...tags, ...paramsToTempTags(params)];
+    const r = await executeNode(target, inputs, callTags, ctx);
     if (r.status !== 'success') {
       throw new Error(`call("${name}") failed: ${r.error ?? 'unknown error'}`);
     }

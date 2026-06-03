@@ -2029,7 +2029,8 @@ const users = env.USERS || [];   // e.g. USERS=["alice","bob","carol"] on an env
 
 const results = [];
 for (const user of users) {
-  const data = await call('HTTP Login', { body: { username: user } });
+  // params fill the node's {{placeholders}} — e.g. body {"username":"{{username}}"}
+  const data = await call('HTTP Login', { username: user });
   log('logged in ' + user);
   if (data && data.token) {
     results.push({ user, token: data.token });
@@ -2060,9 +2061,9 @@ const users = env.USERS || [];
 
 const ok = [], failed = [];
 for (const user of users) {
-  const res = await call('HTTP Login', { body: { username: user } });
+  const res = await call('HTTP Login', { username: user });
   if (res && res.token) {
-    await call('Save Session', { body: { user, token: res.token } });
+    await call('Save Session', { user, token: res.token });
     ok.push(user);
   } else {
     await send('Alert', { user });   // fire-and-forget the failure path
@@ -2307,7 +2308,7 @@ function ScriptFields({
                 <li><code className="font-mono text-[var(--color-primary)]">env.KEY</code> — env vars จาก env node ที่ต่อเข้ามา (เช่น <code className="font-mono">env.USERS</code>)</li>
                 <li><code className="font-mono text-[var(--color-primary)]">inputs[&apos;NodeName&apos;]</code> — output ของ node ก่อนหน้า (ตาม edge label / ชื่อ node)</li>
                 <li><code className="font-mono text-[var(--color-primary)]">tags.KEY</code> — ค่า tag ใน project</li>
-                <li><code className="font-mono text-[var(--color-primary)]">await call(&apos;NodeName&apos;, overrides?)</code> — รัน node นั้น รอผล คืน output</li>
+                <li><code className="font-mono text-[var(--color-primary)]">await call(&apos;NodeName&apos;, params?)</code> — รัน node นั้น รอผล คืน output; <code className="font-mono">params</code> เป็น temp tag เติม <code className="font-mono">{'{{placeholder}}'}</code> ใน node (method/url/body ใช้ของ node เดิม)</li>
                 <li><code className="font-mono text-[var(--color-primary)]">await send(&apos;NodeName&apos;, data)</code> — fire-and-forget ไม่รอผล</li>
                 <li><code className="font-mono text-[var(--color-primary)]">log(msg)</code> — บันทึก log โชว์ใน output panel</li>
                 <li><code className="font-mono text-[var(--color-primary)]">return results</code> — ส่งค่าต่อ downstream</li>

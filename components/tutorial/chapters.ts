@@ -688,27 +688,28 @@ const scriptLoop: Chapter = {
       },
     },
     {
-      label: '2️⃣ call() แบบ axios — กำหนด method + body เอง',
+      label: '2️⃣ call() ส่ง params — เติม {{tag}} ใน node ปลายทาง',
       detail:
-        'overrides ตัวที่สองของ call() ทำงานเหมือน axios: ใส่ { method } เปลี่ยน verb (พิมพ์เล็ก/ใหญ่ก็ได้) และ { body: {...} } ส่ง JSON body เข้าไปตรง ๆ — แม้ HTTP node นั้นจะถูกตั้งไว้เป็น form/none ก็จะถูกส่งเป็น raw JSON ให้อัตโนมัติ. เท่ากับ axios.post(url, data) / axios.get(url).',
+        'argument ตัวที่สองของ call() คือ params: object ที่ถูกฉีดเป็น temp tag ให้ node ปลายทาง. node ยังใช้ method/url/headers/body ของตัวเองเหมือนเดิม — params แค่ไปแทน {{placeholder}} ใน config. เช่น Login API มี body {"username":"{{username}}"} → call(\'Login API\', { username: env.USER }) จะแทน {{username}} เป็นค่าจริงตอนยิง. ไม่ต้องระบุ method/body อีก.',
       scene: {
         nodes: [
-          { id: 'script', type: 'function', label: '📜 Login Loop', subtitle: 'call(…, { method, body })', x: 18, y: 40, badge: '📜 script • running…' },
+          { id: 'script', type: 'function', label: '📜 Login Loop', subtitle: 'call(…, { username, password })', x: 18, y: 40, badge: '📜 script • running…' },
           { id: 'login', type: 'http-request', label: 'Login API', subtitle: 'POST /login', x: 66, y: 64 },
         ],
         edges: [{ id: 'e', from: 'script', to: 'login', label: 'call', draw: true }],
         sheet: {
-          title: '📞 call() = axios · 📜 Script',
+          title: '📞 call(name, params) · 📜 Script',
           from: 'bottom',
           code:
-            '// เหมือน axios.post(url, { username, password })\n' +
+            '// Login API body: {"username":"{{username}}","password":"{{password}}"}\n' +
+            '// params แทน {{username}} / {{password}} ทันที\n' +
             "const res = await call('Login API', {\n" +
-            "  method: 'POST',\n" +
-            '  body: { username: env.USER, password: env.PASS },\n' +
+            '  username: env.USER,\n' +
+            '  password: env.PASS,\n' +
             '});\n' +
             '\n' +
-            '// เหมือน axios.get(url) — เปลี่ยน verb ไม่ต้องมี body\n' +
-            "const me = await call('Get Profile', { method: 'GET' });\n" +
+            '// ไม่มี params ก็ได้ — node ใช้ method/url ของตัวเอง\n' +
+            "const me = await call('Get Profile');\n" +
             '\n' +
             'return { token: res.token, me };',
         },

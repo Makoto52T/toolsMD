@@ -397,25 +397,25 @@ function LoopMode() {
         <li><Code>env</Code> — variables from any <strong>env node</strong> wired into this node, e.g. <Code>env.USERS</Code> (an array) or <Code>env.PORT</Code>.</li>
         <li><Code>inputs[&apos;NodeName&apos;]</Code> — the output of an upstream node (also keyed by the edge label).</li>
         <li><Code>tags</Code> — the project tag list.</li>
-        <li><Code>await call(&apos;NodeName&apos;, overrides?)</Code> — runs that node for real (its config deep-merged with <Code>overrides</Code>), waits, and returns its output. Throws if that node errors, so a <Code>try/catch</Code> works. For HTTP nodes the overrides feel like <Code>axios</Code>: pass <Code>{'{ method }'}</Code> to set the verb (any case) and <Code>{'{ body }'}</Code> with a plain object to send a JSON body — the object is sent as raw JSON even if the node was saved as form/none.</li>
+        <li><Code>await call(&apos;NodeName&apos;, params?)</Code> — runs that node for real, waits, and returns its output. Throws if that node errors, so a <Code>try/catch</Code> works. The node keeps its <em>own</em> method, URL, headers and body — <Code>params</Code> are injected as temporary tags that fill the node&apos;s <Code>{'{{placeholders}}'}</Code>. So if a HTTP node&apos;s body is <Code>{'{"username":"{{username}}"}'}</Code>, calling <Code>call(&apos;Login&apos;, {'{ username: \'alice\' }'})</Code> replaces <Code>{'{{username}}'}</Code> with <Code>alice</Code> at send time. No need to restate the method or body format.</li>
         <li><Code>await send(&apos;NodeName&apos;, data)</Code> — fire-and-forget: kicks the node off without waiting for the result (good for fanning out webhooks).</li>
         <li><Code>log(msg)</Code> — records a line shown in the output panel.</li>
         <li><Code>return value</Code> — becomes this node&apos;s output, flowing downstream.</li>
       </UL>
-      <P>A forEach-and-collect example — log in every user from an env array and gather the tokens. Note how <Code>call</Code> mirrors <Code>axios.post(url, data)</Code>:</P>
+      <P>A forEach-and-collect example — log in every user from an env array and gather the tokens. The <Code>Login API</Code> node already has body <Code>{'{"username":"{{username}}","password":"{{password}}"}'}</Code>; <Code>call</Code> just hands it the values that fill those placeholders:</P>
       <Block>{`const users = env.USERS;            // ["alice","bob","carol"]
 const results = [];
 for (const user of users) {
-  // like axios.post(url, { username, password })
+  // fills {{username}} / {{password}} in the Login API node's body
   const data = await call('Login API', {
-    method: 'POST',
-    body: { username: user, password: env.PASS },
+    username: user,
+    password: env.PASS,
   });
   if (data.token) results.push({ user, token: data.token });
 }
 
-// like axios.get(url) — method override, no body
-const stats = await call('Get Stats', { method: 'GET' });
+// no params needed — the node already knows its method/url
+const stats = await call('Get Stats');
 return { results, stats };`}</Block>
       <P>
         Pick a starter from the <strong>template</strong> dropdown (forEach + collect, forEach + fire-and-forget,
