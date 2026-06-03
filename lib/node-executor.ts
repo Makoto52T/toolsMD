@@ -114,6 +114,11 @@ export interface ScriptMeta {
   // Lines emitted via log(...) inside the script (chronological).
   logs: string[];
   durationMs: number;
+  // Ids of nodes this script drove via call()/send(). The workflow runner uses
+  // these to AVOID re-executing them standalone in the topological pass (the
+  // script already ran them with the right per-iteration temp tags; a second
+  // bare run would fire with empty placeholders and fail the whole chain).
+  calledNodeIds?: string[];
 }
 
 export interface ExecutionResult {
@@ -527,6 +532,9 @@ async function runLoopScript(
   const logs: string[] = [];
   let calls = 0;
   let sends = 0;
+  // Track which nodes this script actually drove (call/send), so the workflow
+  // runner can skip re-running them standalone afterwards.
+  const calledNodeIds = new Set<string>();
 
   const guard = () => {
     if (calls >= SCRIPT_MAX_CALLS) {
@@ -542,6 +550,7 @@ async function runLoopScript(
     const target = findNodeByName(name, ctx);
     if (!target) throw new Error(`call("${name}"): no node named "${name}" on this canvas.`);
     calls += 1;
+    calledNodeIds.add(target.id);
     // `params` are wired into the target two complementary ways:
     //   1. as temp tags, so the node's own {{placeholders}} (url / headers /
     //      body template) resolve to them — temp tags are appended AFTER the
@@ -568,6 +577,7 @@ async function runLoopScript(
       return;
     }
     sends += 1;
+    calledNodeIds.add(target.id);
     // Inject the payload as config.scriptInput so the target can read it, and
     // also expose it on inputs for function nodes.
     const merged: PlannerNode = {
@@ -593,14 +603,14 @@ async function runLoopScript(
       nodeId: node.id,
       status: 'success',
       output,
-      script: { calls, sends, logs, durationMs: Date.now() - startedAt },
+      script: { calls, sends, logs, durationMs: Date.now() - startedAt, calledNodeIds: [...calledNodeIds] },
     };
   } catch (e: any) {
     return {
       nodeId: node.id,
       status: 'error',
       error: e?.message ? String(e.message) : 'Loop script threw an error.',
-      script: { calls, sends, logs, durationMs: Date.now() - startedAt },
+      script: { calls, sends, logs, durationMs: Date.now() - startedAt, calledNodeIds: [...calledNodeIds] },
     };
   }
 }
@@ -1217,9 +1227,30 @@ export async function executeWorkflow(
   // skipped). Propagates downward through the topological order.
   const skipped = new Set<string>();
 
+  // Node ids already driven by a loop *script* via call()/send(). The script ran
+  // them once per iteration with the right temp tags; the topological pass must
+  // NOT run them again standalone (empty placeholders -> failed chain). We treat
+  // them as already-done (output = the loop's own output) so they neither re-fire
+  // nor poison their downstream as a failure.
+  const handledByScript = new Set<string>();
+
   for (const nodeId of order) {
     const node = nodes.find((n) => n.id === nodeId)!;
     const fromNodeIds = incoming.get(nodeId) ?? [];
+
+    // Already executed by an upstream loop script — report done, don't re-run.
+    if (handledByScript.has(nodeId)) {
+      const result: ExecutionResult = {
+        nodeId,
+        nodeName: node.name,
+        nodeType: node.type,
+        status: 'success',
+        output: outputs.get(nodeId),
+      };
+      results.push(result);
+      await onStatus?.({ nodeId, nodeName: node.name, status: 'done', result, fromNodeIds });
+      continue;
+    }
 
     // Skip if any upstream node failed or was skipped.
     if (fromNodeIds.some((src) => skipped.has(src) || hasFailed(src, results))) {
@@ -1246,6 +1277,16 @@ export async function executeWorkflow(
 
     if (result.status === 'success') {
       outputs.set(nodeId, result.output);
+      // A loop script reports the nodes it drove via call()/send(). Mark them so
+      // the topological pass treats them as already-run (skips re-execution) and
+      // forwards the script's output as their stand-in output for downstream.
+      const driven = result.script?.calledNodeIds;
+      if (Array.isArray(driven)) {
+        for (const did of driven) {
+          handledByScript.add(did);
+          if (!outputs.has(did)) outputs.set(did, result.output);
+        }
+      }
       // Only successful (2xx) executions write tags.
       const applied = applyOutputBindings(
         result.output,
