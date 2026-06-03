@@ -704,6 +704,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       // Hard cap: a loop may run at most 30 minutes regardless of round count.
       const MAX_LOOP_MS = 1_800_000;
       const maxErrors = Math.max(1, Number(cfg.loopMaxErrors) || 3);
+      // Delay between rounds: 0–60000 ms (default 0 = back-to-back).
+      const loopDelayMs = Math.min(60_000, Math.max(0, Math.floor(Number(cfg.loopDelayMs) || 0)));
       const stopExpr =
         typeof cfg.loopStopCondition === 'string' ? cfg.loopStopCondition.trim() : '';
 
@@ -786,6 +788,16 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           }
           if (done) {
             toast.success('Loop stop condition met');
+            stoppedEarly = true;
+            break;
+          }
+        }
+
+        // Wait before the next round (skip after the final round). Re-check the
+        // Stop flag after the delay so a Stop pressed mid-wait takes effect.
+        if (loopDelayMs > 0 && i < rounds - 1) {
+          await new Promise((resolve) => setTimeout(resolve, loopDelayMs));
+          if (shouldStopRef.current.get(nodeId) === true) {
             stoppedEarly = true;
             break;
           }
@@ -1771,6 +1783,8 @@ function LoopNodeFields({
   const enabled = cfg.loopEnabled === true;
   const rounds = cfg.loopRounds != null ? String(cfg.loopRounds) : '';
   const maxErrors = cfg.loopMaxErrors != null ? String(cfg.loopMaxErrors) : '';
+  const delayMs = cfg.loopDelayMs != null ? String(cfg.loopDelayMs) : '';
+  const delayNum = Number(cfg.loopDelayMs) || 0;
   const stopCondition =
     typeof cfg.loopStopCondition === 'string' ? cfg.loopStopCondition : '';
 
@@ -1847,6 +1861,40 @@ function LoopNodeFields({
                 หยุดเมื่อ error สะสมถึง
               </p>
             </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-[var(--color-neutral-700)]">
+              Delay between rounds (ms)
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={60000}
+              step={100}
+              data-testid="loop-delay-input"
+              value={delayMs}
+              placeholder="0"
+              onChange={(e) => {
+                if (e.target.value === '') {
+                  setCfg({ loopDelayMs: undefined });
+                  return;
+                }
+                // Clamp 0–60000 as the user types; runtime clamps again.
+                const n = Math.floor(Number(e.target.value));
+                const clamped = Number.isNaN(n) ? 0 : Math.min(60000, Math.max(0, n));
+                setCfg({ loopDelayMs: clamped });
+              }}
+              className="w-full rounded-lg border border-[var(--color-neutral-300)] px-3 py-2 text-sm focus:border-[var(--color-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+            />
+            <p className="mt-0.5 text-[10px] text-[var(--color-neutral-400)]">
+              0–60000 ms (default 0 = ไม่มี delay)
+              {delayNum >= 1000 ? (
+                <span className="ml-1 font-semibold text-[var(--color-primary)]">
+                  ≈ {(delayNum / 1000).toFixed(delayNum % 1000 === 0 ? 0 : 1)}s
+                </span>
+              ) : null}
+            </p>
           </div>
 
           <div>

@@ -53,6 +53,14 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
   const runLabel = isServer ? '▶ Ping' : '▶ Run';
   const loopEnabled = cfg.loopEnabled === true;
   const looping = data.looping === true;
+  // Human-readable delay between rounds (≥1000ms shown as seconds), if any.
+  const loopDelayMs = Math.min(60000, Math.max(0, Math.floor(Number(cfg.loopDelayMs) || 0)));
+  const loopDelayLabel =
+    loopDelayMs <= 0
+      ? ''
+      : loopDelayMs >= 1000
+        ? `${(loopDelayMs / 1000).toFixed(loopDelayMs % 1000 === 0 ? 0 : 1)}s`
+        : `${loopDelayMs}ms`;
   const isNew = data.isNew === true;
   // Vermilion used for the freshly-created pulse border.
   const NEW_COLOR = '#cf3a1e';
@@ -229,6 +237,7 @@ function FlowNodeComponent({ id, data, selected }: NodeProps<FlowNodeData>) {
             >
               <span className="animate-spin">🔁</span>
               loop ({data.loopRound ?? 0}/{data.loopTotal ?? 0})
+              {loopDelayLabel ? <span className="opacity-80">• {loopDelayLabel}</span> : null}
             </span>
           ) : (
             <span

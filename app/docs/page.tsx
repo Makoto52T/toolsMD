@@ -318,6 +318,7 @@ function LoopMode() {
       <UL>
         <li><Code>Rounds</Code> — how many times to run (default <Code>10</Code>, range <Code>1–1000</Code>). Values are clamped to this range.</li>
         <li><Code>Max errors</Code> — error budget (default <Code>3</Code>). The loop stops once this many rounds have failed in a row; a successful round resets the count.</li>
+        <li><Code>Delay between rounds</Code> — milliseconds to wait between rounds (default <Code>0</Code> = back-to-back, range <Code>0–60000</Code>). The wait happens after each round except the last; pressing <strong>Stop</strong> during a wait ends the loop. When set, the running badge shows it, e.g. <Code>🔁 loop (3/10) • 1.5s</Code>.</li>
         <li><Code>Stop condition</Code> — an optional JavaScript expression. When it evaluates truthy after a successful round, the loop stops early. Leave it blank to simply run all rounds.</li>
       </UL>
 
