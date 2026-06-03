@@ -188,7 +188,6 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const rfInstanceRef = useRef<ReactFlowInstance<FlowNodeData> | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ApiNode | null>(null);
-  const [executing, setExecuting] = useState(false);
   // Result panel: null = closed. Holds an ordered list of node results plus a
   // title (single node name, or "Workflow").
   const [execPanel, setExecPanel] = useState<{
@@ -198,6 +197,18 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   } | null>(null);
   // Per-node spinner state (single-node execute).
   const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
+  // ---- No-code workflow run (SSE-driven "Run Flow") ----
+  // True while a streamed workflow run is in progress (header Run Flow ⇄ Stop).
+  const [flowRunning, setFlowRunning] = useState(false);
+  // Per-node live status during a run: nodeId -> { status, preview }.
+  const [runStatuses, setRunStatuses] = useState<
+    Record<string, { status: 'pending' | 'running' | 'done' | 'error' | 'skipped'; preview?: string }>
+  >({});
+  // Edge ids currently carrying data (animated marching-ants). Set while a node
+  // runs, cleared when it finishes.
+  const [flowingEdgeIds, setFlowingEdgeIds] = useState<Set<string>>(() => new Set());
+  // AbortController for the in-flight SSE fetch so Stop / unmount can cancel it.
+  const flowAbortRef = useRef<AbortController | null>(null);
   // Which edge the pointer is currently over — drives the whole-edge hover
   // highlight in DeletableEdge (fed in via each edge's `data.hovered`).
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
@@ -575,32 +586,159 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     [id, toast],
   );
 
-  // ---- Execute whole workflow ----
-  const execute = async () => {
-    setExecuting(true);
+  // ---- Run Flow (no-code, SSE-streamed) ----
+  // Stop the in-flight workflow run: abort the SSE fetch. The reader loop's
+  // finally block clears the running flag + flowing edges.
+  const stopFlow = useCallback(() => {
+    flowAbortRef.current?.abort();
+  }, []);
+
+  // Build a short, single-line preview from a node result's output (or error),
+  // for the mini preview shown on the node card after it finishes.
+  const previewOf = useCallback((result: ExecResult | undefined): string => {
+    if (!result) return '';
+    if (result.status === 'error') return result.error || 'error';
+    const out = result.output;
+    if (out == null) return '';
+    let s: string;
     try {
-      const res = await fetch(`/api/projects/${id}/execute`, { method: 'POST' });
-      const data = await res.json();
-      const results: ExecResult[] = Array.isArray(data?.results) ? data.results : [];
-      const missing: MissingBinding[] = Array.isArray(data?.missingBindings)
-        ? data.missingBindings
-        : [];
-      // Adopt server-canonical tags (output bindings may have written values).
-      if (Array.isArray(data?.tags)) setTags(data.tags);
-      setExecPanel({ title: 'Workflow', results, missingBindings: missing });
-      if (res.ok && results.every((r) => r.status === 'success')) toast.success('Execution finished');
-      else toast.warning('Execution finished with errors');
+      s = typeof out === 'string' ? out : JSON.stringify(out);
     } catch {
-      toast.error('Execution failed');
-      setExecPanel({
-        title: 'Workflow',
-        results: [{ nodeId: '', status: 'error', error: 'Network error during execution.' }],
-        missingBindings: [],
-      });
-    } finally {
-      setExecuting(false);
+      s = String(out);
     }
-  };
+    s = s.replace(/\s+/g, ' ').trim();
+    return s.length > 80 ? s.slice(0, 80) + '…' : s;
+  }, []);
+
+  // Start a streamed workflow run. Opens an SSE POST to /execute-workflow and
+  // updates per-node status + flowing edges live as `node` events arrive, then
+  // adopts canonical tags + populates the output panel on `complete`.
+  const runFlow = useCallback(async () => {
+    if (flowAbortRef.current) return; // already running
+    const controller = new AbortController();
+    flowAbortRef.current = controller;
+    setFlowRunning(true);
+    // Seed every node as 'pending' so the whole graph dims into "queued".
+    setRunStatuses(
+      Object.fromEntries(nodesRef.current.map((n) => [n.id, { status: 'pending' as const }])),
+    );
+    setFlowingEdgeIds(new Set());
+
+    // Resolve which edges feed a node (for the marching-ants flash).
+    const edgesFeeding = (nodeId: string, fromIds: string[]): string[] =>
+      edgesRef.current
+        .filter((e) => e.targetNodeId === nodeId && fromIds.includes(e.sourceNodeId))
+        .map((e) => e.id);
+
+    try {
+      const res = await fetch(`/api/projects/${id}/execute-workflow`, {
+        method: 'POST',
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || 'Failed to start workflow');
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      // Parse SSE frames: events are separated by a blank line; each frame has
+      // an `event:` and a `data:` line.
+      const handleFrame = (raw: string) => {
+        let event = 'message';
+        const dataLines: string[] = [];
+        for (const line of raw.split('\n')) {
+          if (line.startsWith('event:')) event = line.slice(6).trim();
+          else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+        }
+        if (dataLines.length === 0) return;
+        let payload: any;
+        try {
+          payload = JSON.parse(dataLines.join('\n'));
+        } catch {
+          return;
+        }
+
+        if (event === 'node') {
+          const { nodeId, status, result, fromNodeIds } = payload as {
+            nodeId: string;
+            status: 'running' | 'done' | 'error' | 'skipped';
+            result?: ExecResult;
+            fromNodeIds?: string[];
+          };
+          setRunStatuses((prev) => ({
+            ...prev,
+            [nodeId]: { status, preview: previewOf(result) },
+          }));
+          // Flash the incoming edges while this node runs; clear them once done.
+          const feeding = edgesFeeding(nodeId, fromNodeIds ?? []);
+          if (status === 'running' && feeding.length) {
+            setFlowingEdgeIds((prev) => {
+              const next = new Set(prev);
+              feeding.forEach((eid) => next.add(eid));
+              return next;
+            });
+          } else if (status !== 'running' && feeding.length) {
+            setFlowingEdgeIds((prev) => {
+              const next = new Set(prev);
+              feeding.forEach((eid) => next.delete(eid));
+              return next;
+            });
+          }
+        } else if (event === 'complete') {
+          const { tags: finalTags, missingBindings, results } = payload as {
+            tags?: Tag[];
+            missingBindings?: MissingBinding[];
+            results?: ExecResult[];
+          };
+          if (Array.isArray(finalTags)) setTags(finalTags);
+          setExecPanel({
+            title: 'Workflow',
+            results: Array.isArray(results) ? results : [],
+            missingBindings: Array.isArray(missingBindings) ? missingBindings : [],
+          });
+          const ok = Array.isArray(results) && results.every((r) => r.status === 'success');
+          if (ok) toast.success('Flow finished');
+          else toast.warning('Flow finished with errors');
+        } else if (event === 'error') {
+          toast.error((payload as { error?: string }).error || 'Workflow error');
+        }
+      };
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // Frames are delimited by a blank line ("\n\n").
+        let idx: number;
+        while ((idx = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          if (frame.trim()) handleFrame(frame);
+        }
+      }
+    } catch (e: any) {
+      // AbortError = user pressed Stop / navigated away; not an error to surface.
+      if (e?.name !== 'AbortError') toast.error('Workflow run failed');
+    } finally {
+      flowAbortRef.current = null;
+      setFlowRunning(false);
+      setFlowingEdgeIds(new Set());
+    }
+  }, [id, toast, previewOf]);
+
+  // Abort an in-flight run on unmount so its fetch/reader doesn't outlive the page.
+  useEffect(() => {
+    return () => {
+      flowAbortRef.current?.abort();
+    };
+  }, []);
 
   // ---- Execute a single node (n8n-style: fire one node, see its output) ----
   const executeOne = useCallback(
@@ -1034,6 +1172,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const nodesRef = useRef<ApiNode[]>(nodes);
   nodesRef.current = nodes;
 
+  // Latest edges in a ref so the workflow-run stream can resolve which edges to
+  // flash (from source->target) without re-subscribing.
+  const edgesRef = useRef<ApiEdge[]>(edges);
+  edgesRef.current = edges;
+
   // Latest tags in a ref so bind handlers read current state without re-subscribing.
   const tagsRef = useRef<Tag[]>(tags);
   tagsRef.current = tags;
@@ -1055,6 +1198,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       const cfg = (n.config ?? {}) as Record<string, any>;
       const loopEnabled = cfg.loopEnabled === true;
       const looping = n.id in loopState;
+      const run = runStatuses[n.id];
       return {
         name: n.name,
         type: n.type,
@@ -1066,6 +1210,9 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         looping,
         loopRound: loopState[n.id]?.round,
         loopTotal: loopState[n.id]?.total,
+        // Live workflow-run status (Run Flow / SSE).
+        runStatus: run?.status,
+        runPreview: run?.preview,
         onEdit: (nid: string) => {
           // Opening the editor counts as acknowledging the node — settle it now.
           settleNewNode(nid);
@@ -1080,7 +1227,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         onStopLoop: (nid: string) => stopLoopRef.current(nid),
       };
     },
-    [runningNodeId, loopState, newlyCreatedNodeIds, settleNewNode],
+    [runningNodeId, loopState, newlyCreatedNodeIds, settleNewNode, runStatuses],
   );
 
   // Reconcile RFNode[] with the source-of-truth ApiNode[] WITHOUT discarding the
@@ -1134,10 +1281,15 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
         type: 'deletable',
         animated: true,
         style: { strokeWidth: 2, stroke: sourceColor },
-        data: { onDelete: deleteEdge, hovered: e.id === hoveredEdgeId, sourceColor },
+        data: {
+          onDelete: deleteEdge,
+          hovered: e.id === hoveredEdgeId,
+          sourceColor,
+          flowing: flowingEdgeIds.has(e.id),
+        },
       };
     });
-  }, [edges, nodes, deleteEdge, hoveredEdgeId]);
+  }, [edges, nodes, deleteEdge, hoveredEdgeId, flowingEdgeIds]);
 
   const nodeTypes = useMemo(() => ({ tmd: FlowNode }), []);
   const edgeTypes = useMemo(() => ({ deletable: DeletableEdge }), []);
@@ -1255,22 +1407,40 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             Export
           </Button>
           <div className="hidden h-5 w-px bg-[var(--color-neutral-200)] sm:block" />
-          <Button
-            size={isMobile ? 'md' : 'sm'}
-            variant="primary"
-            onClick={execute}
-            loading={executing}
-            leftIcon={
-              !executing ? (
+          {/* Run Flow — streamed (SSE) no-code workflow run. Follows the edges,
+              lights each node live, animates data flow. Toggles to Stop while
+              running. Single run control (no separate batch button). */}
+          {flowRunning ? (
+            <Button
+              size={isMobile ? 'md' : 'sm'}
+              variant="danger"
+              onClick={stopFlow}
+              data-testid="stop-flow-btn"
+              leftIcon={
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="1.5" />
+                </svg>
+              }
+            >
+              <span className="sm:hidden">Stop</span>
+              <span className="hidden sm:inline">Stop</span>
+            </Button>
+          ) : (
+            <Button
+              size={isMobile ? 'md' : 'sm'}
+              variant="primary"
+              onClick={runFlow}
+              data-testid="run-flow-btn"
+              leftIcon={
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M8 5v14l11-7z" />
                 </svg>
-              ) : undefined
-            }
-          >
-            <span className="sm:hidden">Run</span>
-            <span className="hidden sm:inline">Run chain</span>
-          </Button>
+              }
+            >
+              <span className="sm:hidden">Run</span>
+              <span className="hidden sm:inline">Run Flow</span>
+            </Button>
+          )}
         </div>
       </div>
 

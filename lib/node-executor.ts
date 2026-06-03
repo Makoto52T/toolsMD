@@ -837,14 +837,58 @@ export interface WorkflowRunResult {
   tagsChanged: boolean;
 }
 
+// Streamed during a workflow run so the canvas can light each node up live.
+//   'running' -> we're about to execute this node
+//   'done'    -> finished successfully (result carries the output/http meta)
+//   'error'   -> the node returned an error (result carries the message)
+//   'skipped' -> an upstream node failed, so this node never ran
+export type NodeRunStatus = 'running' | 'done' | 'error' | 'skipped';
+
+export interface NodeStatusEvent {
+  nodeId: string;
+  nodeName?: string;
+  status: NodeRunStatus;
+  // For done/error: the full ExecutionResult so the UI can show output inline.
+  result?: ExecutionResult;
+  // Source node ids whose output fed this node (so the UI can flash those edges).
+  fromNodeIds?: string[];
+}
+
+/**
+ * Compute, for each node, the set of upstream source node ids that feed it.
+ * Used both to flash incoming edges and to know which nodes to skip when an
+ * upstream node fails.
+ */
+function incomingByNode(edges: Edge[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const e of edges) {
+    const list = map.get(e.targetNodeId) ?? [];
+    list.push(e.sourceNodeId);
+    map.set(e.targetNodeId, list);
+  }
+  return map;
+}
+
+/**
+ * Execute every node following the graph topology, threading each node's output
+ * forward to its connected downstream nodes (auto data passing) and tags forward
+ * (output bindings). Optionally streams a NodeStatusEvent before and after each
+ * node so a live UI (SSE) can animate the run.
+ *
+ * Failure handling: if any upstream node of a node failed (status 'error'), the
+ * node is SKIPPED — it never executes and its downstream is skipped in turn.
+ * This stops a broken login from firing every authenticated call after it.
+ */
 export async function executeWorkflow(
   nodes: PlannerNode[],
   edges: Edge[],
-  tags: Tag[] = []
+  tags: Tag[] = [],
+  onStatus?: (e: NodeStatusEvent) => void | Promise<void>,
 ): Promise<WorkflowRunResult> {
   const results: ExecutionResult[] = [];
   const outputs = new Map<string, any>();
   const order = getExecutionOrder(nodes, edges);
+  const incoming = incomingByNode(edges);
 
   // Tags evolve as we go so a node later in the chain reads values written by an
   // earlier node in the SAME run (login chain: node A writes access_token,
@@ -854,10 +898,32 @@ export async function executeWorkflow(
   const missingBindings: MissingBinding[] = [];
   const ctx: ExecContext = { nodes, edges };
 
+  // Node ids that won't run because an upstream node failed (or was itself
+  // skipped). Propagates downward through the topological order.
+  const skipped = new Set<string>();
+
   for (const nodeId of order) {
     const node = nodes.find((n) => n.id === nodeId)!;
-    const inputs = getNodeInputs(nodeId, edges, outputs);
+    const fromNodeIds = incoming.get(nodeId) ?? [];
 
+    // Skip if any upstream node failed or was skipped.
+    if (fromNodeIds.some((src) => skipped.has(src) || hasFailed(src, results))) {
+      skipped.add(nodeId);
+      const result: ExecutionResult = {
+        nodeId,
+        nodeName: node.name,
+        nodeType: node.type,
+        status: 'error',
+        error: 'Skipped: an upstream node failed.',
+      };
+      results.push(result);
+      await onStatus?.({ nodeId, nodeName: node.name, status: 'skipped', result, fromNodeIds });
+      continue;
+    }
+
+    await onStatus?.({ nodeId, nodeName: node.name, status: 'running', fromNodeIds });
+
+    const inputs = getNodeInputs(nodeId, edges, outputs);
     const result = await executeNode(node, inputs, currentTags, ctx);
     result.nodeName = node.name;
     result.nodeType = node.type;
@@ -878,10 +944,21 @@ export async function executeWorkflow(
         tagsChanged = true;
       }
       missingBindings.push(...applied.missing);
+      await onStatus?.({ nodeId, nodeName: node.name, status: 'done', result, fromNodeIds });
+    } else {
+      // A failed node poisons its downstream (handled at the top of the loop).
+      skipped.add(nodeId);
+      await onStatus?.({ nodeId, nodeName: node.name, status: 'error', result, fromNodeIds });
     }
   }
 
   return { results, tags: currentTags, missingBindings, tagsChanged };
+}
+
+// Has a given node id already produced an error result in this run?
+function hasFailed(nodeId: string, results: ExecutionResult[]): boolean {
+  const r = results.find((x) => x.nodeId === nodeId);
+  return !!r && r.status === 'error';
 }
 
 export interface SingleRunResult {

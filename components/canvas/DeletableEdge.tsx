@@ -40,6 +40,9 @@ export type DeletableEdgeData = {
   // Colour of the edge, derived from its source node's type (passed by the
   // canvas). Drives both the resting stroke and the lightened hover glow.
   sourceColor?: string;
+  // True while a workflow run is passing data through this edge — renders an
+  // animated marching-ants overlay so the user sees the flow direction.
+  flowing?: boolean;
 };
 
 export function DeletableEdge({
@@ -56,6 +59,7 @@ export function DeletableEdge({
   data,
 }: EdgeProps<DeletableEdgeData>) {
   const hovered = data?.hovered ?? false;
+  const flowing = data?.flowing ?? false;
   const sourceColor = data?.sourceColor ?? FALLBACK_STROKE;
 
   const [edgePath, labelX, labelY] = getBezierPath({
@@ -93,6 +97,29 @@ export function DeletableEdge({
         markerEnd={markerEnd}
         interactionWidth={24}
       />
+      {/* Data-flow animation: a brighter dashed overlay marching from source to
+          target while this edge is carrying data during a workflow run. Drawn on
+          top of the base edge (same path) so the underlying colour still reads. */}
+      {flowing ? (
+        <>
+          <style>{`
+            @keyframes tmdEdgeFlow { to { stroke-dashoffset: -24; } }
+          `}</style>
+          <path
+            d={edgePath}
+            fill="none"
+            stroke={sourceColor}
+            strokeWidth={3.5}
+            strokeLinecap="round"
+            strokeDasharray="8 8"
+            style={{
+              animation: 'tmdEdgeFlow 0.5s linear infinite',
+              filter: `drop-shadow(0 0 4px ${hexToRgba(sourceColor, 0.7)})`,
+              pointerEvents: 'none',
+            }}
+          />
+        </>
+      ) : null}
       <EdgeLabelRenderer>
         <div
           className="nodrag nopan absolute flex items-center gap-1"

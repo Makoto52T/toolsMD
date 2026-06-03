@@ -528,6 +528,86 @@ const tagsConnections: Chapter = {
   ],
 };
 
+// ---- Ch.9 Run Workflow -----------------------------------------------------
+// The no-code, one-click run: press Run Flow and the whole graph executes
+// following the edges, lighting each node live + animating data between them.
+const runWorkflow: Chapter = {
+  id: 'run-workflow',
+  num: 9,
+  icon: '▶️',
+  title: 'Run Workflow',
+  blurb: 'one-click run, live status, data flow',
+  steps: [
+    {
+      label: 'กด ▶ Run Flow ครั้งเดียว — รันทั้ง flow',
+      detail:
+        'ปุ่ม Run Flow บน header รันทั้ง canvas อัตโนมัติ: หา start node (ไม่มีเส้นเข้า) แล้วเดินตาม edge ทีละ node ตามลำดับ topological — ไม่ต้องกดทีละ node',
+      scene: {
+        nodes: [
+          { id: 'a', type: 'http-request', label: 'Login', subtitle: 'POST /login', x: 22, y: 30 },
+          { id: 'b', type: 'function', label: 'Parse', subtitle: 'extract token', x: 50, y: 50 },
+          { id: 'c', type: 'http-request', label: 'Get profile', subtitle: 'Bearer {{token}}', x: 78, y: 70 },
+        ],
+        edges: [
+          { id: 'e1', from: 'a', to: 'b', label: 'then' },
+          { id: 'e2', from: 'b', to: 'c', label: 'then' },
+        ],
+        hint: '▶ Run Flow',
+      },
+    },
+    {
+      label: 'แต่ละ node สว่างตามสถานะ realtime',
+      detail:
+        'ผ่าน SSE stream: node ที่กำลังรันมีขอบฟ้า + spinner ✓ เขียวเมื่อเสร็จ ✕ แดงเมื่อ error ที่นี่ A เสร็จแล้ว B กำลังรัน — เส้น A→B วิ่ง animate ส่งข้อมูล',
+      scene: {
+        nodes: [
+          { id: 'a', type: 'http-request', label: 'Login', subtitle: 'POST /login', x: 22, y: 30, badge: '✓ done' },
+          { id: 'b', type: 'function', label: 'Parse', subtitle: 'extract token', x: 50, y: 50, badge: 'running…' },
+          { id: 'c', type: 'http-request', label: 'Get profile', subtitle: 'Bearer {{token}}', x: 78, y: 70 },
+        ],
+        edges: [
+          { id: 'e1', from: 'a', to: 'b', label: 'then', draw: true },
+          { id: 'e2', from: 'b', to: 'c', label: 'then' },
+        ],
+      },
+    },
+    {
+      label: 'Output ของ node ก่อนหน้าไหลไป node ถัดไป',
+      detail:
+        'auto data passing: node ถัดไปอ่าน output ของ upstream ได้ผ่าน inputs[edge label] — เช่น Function node เขียน const prev = inputs["then"] ไม่ต้อง copy ค่าด้วยมือ',
+      scene: {
+        nodes: [
+          { id: 'a', type: 'http-request', label: 'Login', subtitle: 'POST /login', x: 22, y: 30, badge: '✓ done' },
+          { id: 'b', type: 'function', label: 'Parse', subtitle: 'inputs["then"]', x: 50, y: 50, badge: '✓ done' },
+          { id: 'c', type: 'http-request', label: 'Get profile', subtitle: 'Bearer {{token}}', x: 78, y: 70, badge: 'running…' },
+        ],
+        edges: [
+          { id: 'e1', from: 'a', to: 'b', label: 'then' },
+          { id: 'e2', from: 'b', to: 'c', label: 'then', draw: true },
+        ],
+        output: { status: 200, statusText: 'OK', ms: 412, slideIn: true, body: '{\n  "user": "steeler00",\n  "balance": 1280.5\n}' },
+      },
+    },
+    {
+      label: 'node ล้มเหลว → ข้าม downstream',
+      detail:
+        'ถ้า node ไหน error ทุก node ที่อยู่ปลายน้ำของมันจะถูก skip (สีเทา) — login พังก็ไม่ยิง call ที่ต้องใช้ token ต่อ ปุ่มเปลี่ยนเป็น ⏹ Stop กดหยุดกลางคันได้',
+      scene: {
+        nodes: [
+          { id: 'a', type: 'http-request', label: 'Login', subtitle: 'POST /login', x: 22, y: 30, badge: '✕ error 401' },
+          { id: 'b', type: 'function', label: 'Parse', subtitle: 'skipped', x: 50, y: 50, badge: '– skipped' },
+          { id: 'c', type: 'http-request', label: 'Get profile', subtitle: 'skipped', x: 78, y: 70, badge: '– skipped' },
+        ],
+        edges: [
+          { id: 'e1', from: 'a', to: 'b', label: 'then' },
+          { id: 'e2', from: 'b', to: 'c', label: 'then' },
+        ],
+        output: { status: 401, statusText: 'Unauthorized', ms: 120, slideIn: true, error: true, body: '{ "error": "bad credentials" }' },
+      },
+    },
+  ],
+};
+
 export const CHAPTERS: Chapter[] = [
   canvasBasics,
   httpNode,
@@ -537,4 +617,5 @@ export const CHAPTERS: Chapter[] = [
   envNode,
   loopMode,
   tagsConnections,
+  runWorkflow,
 ];

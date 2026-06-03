@@ -51,7 +51,7 @@ export default function TutorialPage() {
             เรียนรู้ TMD แบบเห็นภาพ
           </h1>
           <p className="mt-1 text-sm text-[var(--color-neutral-500)]">
-            8 บท เล่น animation ทีละขั้น ครบทุก node type และ feature
+            {CHAPTERS.length} บท เล่น animation ทีละขั้น ครบทุก node type และ feature
           </p>
         </div>
 

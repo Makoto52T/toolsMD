@@ -283,11 +283,29 @@ function Execution() {
       <H2 id="execution" icon="▶️">Execution</H2>
       <H3>Single node run</H3>
       <P>Run any node on its own to test it in isolation. The result appears in the output panel.</P>
-      <H3>Workflow chain</H3>
+      <H3>Run Flow (whole workflow)</H3>
       <P>
-        Hit <strong>Execute</strong> to run the chain: the executor follows edges in order, feeding each
-        step&apos;s output into the next step as <Code>inputs</Code>. Tags referenced with <Code>{'{{...}}'}</Code>{' '}
-        are resolved at each step.
+        Hit <strong>▶ Run Flow</strong> in the header to run the entire canvas with one click — no code, no
+        per-node clicking. The engine finds the start nodes (no incoming edge), sorts the graph topologically,
+        and executes each node in order, following the edges. The button toggles to <strong>⏹ Stop</strong> while
+        a run is in progress; press it to cancel.
+      </P>
+      <P>
+        The run streams over <Code>Server-Sent Events</Code>, so each node lights up <em>live</em>: a blue pulse +
+        spinner while running, a green <Code>✓</Code> when done, a red <Code>✕</Code> on error. A short output
+        preview appears on the node card, and the edge carrying data animates as a marching-ants line.
+      </P>
+      <H3>Auto data passing</H3>
+      <P>
+        Each node&apos;s output is fed to its connected downstream nodes. A Function or HTTP node reads an upstream
+        result through <Code>inputs</Code>, keyed by the edge&apos;s label — e.g.{' '}
+        <Code>const prev = inputs[&apos;then&apos;]</Code>. Tags referenced with <Code>{'{{...}}'}</Code> are
+        resolved at each step, and a response can be bound back into a tag (below) so a later step reads it.
+      </P>
+      <H3>Failure skips downstream</H3>
+      <P>
+        If a node errors, every node downstream of it is <strong>skipped</strong> (shown dimmed) instead of running
+        with missing data — a failed login won&apos;t fire the authenticated calls that depend on its token.
       </P>
       <H3>Output panel</H3>
       <P>
