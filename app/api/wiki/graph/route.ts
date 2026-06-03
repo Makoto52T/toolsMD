@@ -1,6 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
+
+import { WIKI_GRAPH_OWNER_ID } from '@/app/wiki-graph/owner';
 
 export const runtime = 'nodejs';
 // We manage freshness with an in-process 60s cache below, so let the handler
@@ -250,7 +252,13 @@ function buildGraph(files: RawFile[], source: 'disk' | 'github'): GraphResponse 
   return { nodes, edges, generatedAt: new Date().toISOString(), source };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // Private to the project owner — block direct API hits from anyone else.
+  const userId = request.cookies.get('userId')?.value;
+  if (userId !== WIKI_GRAPH_OWNER_ID) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   if (cache && Date.now() - cache.at < CACHE_MS) {
     return NextResponse.json(cache.data);
   }
